@@ -3,9 +3,16 @@
 // Outbound WhatsApp send. Provider abstraction: TWILIO if
 // TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_WHATSAPP_FROM are
 // set, else META if WHATSAPP_PROVIDER=meta + META_WHATSAPP_TOKEN +
-// META_WHATSAPP_PHONE_ID are set. Without any provider configured the
-// endpoint marks the row sent and returns 200 so dev environments
-// stay functional, mirroring the email comms.send pattern.
+// META_WHATSAPP_PHONE_ID are set.
+//
+// The response says what really happened. `sent` (and `ok`) is true only
+// when a provider accepted the message. With no provider configured nothing
+// is sent: the endpoint used to answer ok: true for that case, so a caller
+// could not tell a sent message from one that never left. It now answers
+// sent: false with code not_configured, and records the row as failed with
+// that reason. The row is not left queued: the queued-comms reaper sends
+// through the email rail and the tenant's chat configs, not the Twilio or
+// Meta account this endpoint uses, so it must not pick the row up later.
 //
 // Body: { to, body, order_id? }
 
@@ -86,9 +93,16 @@ export default async function handler(req, res) {
       } catch (err) { lastError = err.message; }
     }
 
-    const status = !configured
-      ? "manual"
-      : (providerResult && providerResult.ok ? "sent" : "failed");
+    // A provider that threw (lastError) was configured; only "nothing set up
+    // and nothing tried" is not_configured.
+    const status = configured && providerResult && providerResult.ok ? "sent" : "failed";
+    const code = status === "sent" ? null : (configured || lastError ? "provider_error" : "not_configured");
+    const error = status === "sent" ? null
+      : code === "not_configured"
+        ? "No WhatsApp provider is configured, so the message was not sent."
+        : "The WhatsApp provider did not accept the message ("
+          + (providerResult ? providerResult.provider + " returned " + providerResult.status : lastError)
+          + "), so it was not sent.";
 
     const svc = serviceClient();
     const ins = await svc.from("communications").insert(commsRow({
@@ -96,6 +110,7 @@ export default async function handler(req, res) {
       object_type: body?.order_id ? "order" : "whatsapp",
       object_id: body?.order_id || null,
       kind: "whatsapp_outbound",
+      channel: "whatsapp",
       to_address: to,
       subject: null,
       body: text,
@@ -107,6 +122,7 @@ export default async function handler(req, res) {
         provider_status: providerResult?.status || null,
         provider_response: providerResult?.body || null,
         error: lastError,
+        not_sent_reason: code,
       },
     })).select("id").single();
     if (ins.error) throw new Error(ins.error.message);
@@ -115,13 +131,16 @@ export default async function handler(req, res) {
       action: "comm_send",
       objectType: "communications",
       objectId: ins.data.id,
-      detail: "whatsapp::" + status + (configured ? "" : " (no provider configured)"),
+      detail: "whatsapp::" + status + (code ? " (" + code + ")" : ""),
     });
 
     return json(res, 200, {
-      ok: status === "sent" || status === "manual",
+      ok: status === "sent",
+      sent: status === "sent",
       status,
       configured,
+      code,
+      error,
       provider: providerResult?.provider || null,
       communication_id: ins.data.id,
     });

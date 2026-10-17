@@ -15,6 +15,11 @@
 
 import { notifyAdmins } from "../notifications.js";
 import { commsRow } from "../comms-row.js";
+import { alertRecipientsForRoles } from "../internal-recipients.js";
+
+// Who receives the bell and the alert email: the tenant's admins (the
+// notifyAdmins default, now named so the two stay the same audience).
+const ALERT_ROLES = ["admin"];
 
 const isWithinWindow = (now, startStr, endStr) => {
   // IST window check. The tenant_settings.inventory_voice_window_*
@@ -81,7 +86,13 @@ export const dispatchNotifications = async (svc, tenantId) => {
   const todays = (open.data || []).filter((e) => e.detail?.notified?.voice_at && new Date(e.detail.notified.voice_at) > sinceMidnight);
   let voiceCallsToday = todays.length;
 
-  let bellSent = 0, emailQueued = 0, voiceCalls = 0;
+  let bellSent = 0, emailQueued = 0, emailSkipped = 0, voiceCalls = 0;
+  // Alert email recipients, resolved once per run, not once per exception.
+  let recipients = null;
+  const recipientsFor = (roles) => {
+    if (!recipients) recipients = alertRecipientsForRoles(svc, tenantId, roles);
+    return recipients;
+  };
   for (const e of (open.data || [])) {
     const already = e.detail?.notified || {};
     const isHigh = e.severity === "critical" || e.severity === "bad";
@@ -98,31 +109,41 @@ export const dispatchNotifications = async (svc, tenantId) => {
           object_type: "inventory_exception",
           object_id: e.id,
           link_route: "inventory-exceptions",
-        }, { dedupKey: fingerprint });
+        }, { roles: ALERT_ROLES, dedupKey: fingerprint });
         already.bell_at = new Date().toISOString();
         bellSent += 1;
       } catch (_) { /* best-effort */ }
     }
 
     // 2. Email: queue an inventory_alert template via the
-    // communications.send rail. We identify the template by name;
-    // the comms drafter renders the body. If the comms.send helper
-    // is missing for this deployment we silently skip (best-effort).
+    // communications.send rail, to the same roles the bell goes to.
+    // The row used to be queued with no recipient at all, so the reaper
+    // failed every one. When no approved member of those roles has an
+    // address, no row is written and the reason is stamped instead.
     if (!already.email_at && isHigh) {
       try {
-        await svc.from("communications").insert(commsRow({
-          tenant_id: tenantId,
-          direction: "outbound",
-          channel: "email",
-          template: "inventory_alert",
-          subject: buildBody(e),
-          body: JSON.stringify(e.detail).slice(0, 500),
-          status: "queued",
-          object_type: "inventory_exception",
-          object_id: e.id,
-        }));
-        already.email_at = new Date().toISOString();
-        emailQueued += 1;
+        const to = await recipientsFor(ALERT_ROLES);
+        if (!to) {
+          already.email_at = new Date().toISOString();
+          already.email_skipped = "no_recipients";
+          emailSkipped += 1;
+        } else {
+          await svc.from("communications").insert(commsRow({
+            tenant_id: tenantId,
+            direction: "outbound",
+            channel: "email",
+            template: "inventory_alert",
+            to_addr: to.to_addr,
+            cc_addrs: to.cc_addrs,
+            subject: buildBody(e),
+            body: JSON.stringify(e.detail).slice(0, 500),
+            status: "queued",
+            object_type: "inventory_exception",
+            object_id: e.id,
+          }));
+          already.email_at = new Date().toISOString();
+          emailQueued += 1;
+        }
       } catch (_) { /* best-effort */ }
     }
 
@@ -152,5 +173,5 @@ export const dispatchNotifications = async (svc, tenantId) => {
       await svc.from("inventory_exceptions").update({ detail: nextDetail }).eq("id", e.id);
     }
   }
-  return { bellSent, emailQueued, voiceCalls, threshold, maxPerDay };
+  return { bellSent, emailQueued, emailSkipped, voiceCalls, threshold, maxPerDay };
 };

@@ -14,7 +14,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { consumeProposal, cancelProposal, setProposalResult } from "../_lib/action-proposals.js";
-import { sendCommunication } from "../_lib/comms-send.js";
+import { sendCommunication, notSentReason } from "../_lib/comms-send.js";
 import { enqueueTallyVoucher } from "../_lib/tally-enqueue.js";
 import { commsRow } from "../_lib/comms-row.js";
 
@@ -58,11 +58,18 @@ const executeAction = async (svc, ctx, proposal) => {
     })).select("*").single();
     if (draft.error) throw new Error(draft.error.message);
     const sent = await sendCommunication(svc, ctx, draft.data.id);
+    // `sent` is true only when a provider accepted the message. The draft
+    // exists either way, so the action ran, but the screen must not say the
+    // message went out when the row is queued (no provider) or failed (a
+    // refusal, or a channel such as Teams that cannot send).
+    const status = sent.communication?.status || draft.data.status;
+    const delivered = status === "sent";
     return {
       communication: sent.communication || draft.data,
       provider: sent.provider || "manual",
       configured: sent.configured,
-      send_error: sent.error || null,
+      sent: delivered,
+      send_error: delivered ? null : notSentReason(sent),
     };
   }
 

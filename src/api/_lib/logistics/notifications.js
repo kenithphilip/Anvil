@@ -8,6 +8,7 @@
 
 import { notifyAdmins } from "../notifications.js";
 import { commsRow } from "../comms-row.js";
+import { alertRecipientsForRoles } from "../internal-recipients.js";
 
 const RANK = { info: 1, warn: 2, bad: 3, critical: 4 };
 // Only these can ever notify (the loop's own isHigh gate is `>= bad`), so the
@@ -122,8 +123,18 @@ export const dispatchLogisticsNotifications = async (svc, tenantId) => {
 
   let bellSent = 0;
   let emailQueued = 0;
+  let emailSkipped = 0;
   let breachSent = 0;
   let digested = 0;
+
+  // Alert email recipients, resolved once per role set per run (one member
+  // read and one auth lookup per member, not one per exception).
+  const recipientCache = new Map();
+  const recipientsFor = (roles) => {
+    const key = [...roles].sort().join(",");
+    if (!recipientCache.has(key)) recipientCache.set(key, alertRecipientsForRoles(svc, tenantId, roles));
+    return recipientCache.get(key);
+  };
 
   // Enabling the monitor on a tenant with history opens a large backlog at once,
   // and every one of those would otherwise ring its own bell. One bell per
@@ -186,22 +197,36 @@ export const dispatchLogisticsNotifications = async (svc, tenantId) => {
       } catch (_) { /* best-effort */ }
     }
 
-    // 2. Email on first detection of a high-severity exception.
+    // 2. Email on first detection of a high-severity exception, to the same
+    //    roles the bell goes to. The row used to be queued with no recipient
+    //    at all, so the reaper failed every one. When no approved member of
+    //    those roles has an address, no row is written; the exception is
+    //    stamped with the reason so it leaves the query instead of holding a
+    //    place in the window on every tick.
     if (!already.email_at && isHigh) {
       try {
-        await svc.from("communications").insert(commsRow({
-          tenant_id: tenantId,
-          direction: "outbound",
-          channel: "email",
-          template: "logistics_alert",
-          subject: label(e),
-          body: buildBody(e),
-          status: "queued",
-          object_type: "logistics_exception",
-          object_id: e.id,
-        }));
-        already.email_at = new Date().toISOString();
-        emailQueued += 1;
+        const to = await recipientsFor(rolesFor(e));
+        if (!to) {
+          already.email_at = new Date().toISOString();
+          already.email_skipped = "no_recipients";
+          emailSkipped += 1;
+        } else {
+          await svc.from("communications").insert(commsRow({
+            tenant_id: tenantId,
+            direction: "outbound",
+            channel: "email",
+            template: "logistics_alert",
+            to_addr: to.to_addr,
+            cc_addrs: to.cc_addrs,
+            subject: label(e),
+            body: buildBody(e),
+            status: "queued",
+            object_type: "logistics_exception",
+            object_id: e.id,
+          }));
+          already.email_at = new Date().toISOString();
+          emailQueued += 1;
+        }
         touched = true;
       } catch (_) { /* best-effort */ }
     }
@@ -243,5 +268,5 @@ export const dispatchLogisticsNotifications = async (svc, tenantId) => {
     }
   }
 
-  return { bellSent, emailQueued, breachSent, digested, pending: pending.length };
+  return { bellSent, emailQueued, emailSkipped, breachSent, digested, pending: pending.length };
 };

@@ -18,7 +18,10 @@ import { isJobInFlight } from "../../api/_lib/extraction-job-status.js";
 // while nothing moves (a queued job waits for the worker's next tick).
 //
 // The worker is drained by /api/cron/tick. If nothing pings that, a queued
-// job waits, and this shows it waiting (with how long).
+// job waits, and this shows it waiting (with how long), and says when the
+// worker last ran, so "waiting" can be told apart from "the worker is down".
+// That time comes from cron_health through GET /api/health, the public probe
+// that already lists every worker's last run; it exposes nothing new.
 
 export const POLL = Object.freeze({
   firstMs: 2000,       // the first wait, and the wait after any movement
@@ -38,6 +41,32 @@ const progressKey = (s: any): string =>
 
 type Phase = "none" | "watching" | "landed" | "failed" | "stopped";
 
+// How often the worker's last run is read again while a job is in flight.
+export const WORKER_READ_MS = 60_000;
+
+// The background worker's last run, from a /api/health body:
+//   null                         the probe was not read, or cron_health was not
+//                                (say nothing rather than guess)
+//   { known: false }             cron_health has no row for the worker
+//   { known: true, last_run_at, stale, worker }
+// The extraction drain's own row is preferred; the tick that runs it is the
+// fallback. `stale` is the server's verdict against the worker's cadence.
+export type WorkerSeen = { known: boolean; worker?: string; last_run_at?: string; stale?: boolean };
+export const workerSeen = (health: any): WorkerSeen | null => {
+  const cron = health && typeof health === "object" && !Array.isArray(health) ? health.cron : null;
+  if (!cron || cron.configured === false || !Array.isArray(cron.workers)) return null;
+  const row = cron.workers.find((w: any) => w && w.worker === "extraction/jobs")
+    || cron.workers.find((w: any) => w && w.worker === "cron/tick");
+  if (!row || !row.last_run_at) return { known: false };
+  return { known: true, worker: row.worker, last_run_at: row.last_run_at, stale: !!row.stale };
+};
+
+const workerLine = (w: WorkerSeen): string => {
+  if (!w.known) return "There is no record of the background worker running, so this job waits until it does.";
+  const ran = "The background worker last ran " + ageLabel(w.last_run_at) + " ago.";
+  return w.stale ? ran + " That is later than it should be, so this job waits until the worker runs again." : ran;
+};
+
 export const BackgroundExtractionWatch: React.FC<{
   orderId: string;
   /** Change it to look again, e.g. after this screen queued a job. */
@@ -48,6 +77,7 @@ export const BackgroundExtractionWatch: React.FC<{
   const [snap, setSnap] = useState<any>(null);
   const [phase, setPhase] = useState<Phase>("none");
   const [readErr, setReadErr] = useState<string | null>(null);
+  const [worker, setWorker] = useState<WorkerSeen | null>(null);
   const landedRef = useRef(onLanded);
   landedRef.current = onLanded;
 
@@ -62,6 +92,7 @@ export const BackgroundExtractionWatch: React.FC<{
     setSnap(null);
     setPhase("none");
     setReadErr(null);
+    setWorker(null);
 
     const again = () => { timer = setTimeout(poll, delay); };
     const poll = async () => {
@@ -106,6 +137,24 @@ export const BackgroundExtractionWatch: React.FC<{
     poll();
     return () => { live = false; if (timer) clearTimeout(timer); };
   }, [orderId, checkKey]);
+
+  // While a job is in flight, read when the worker last ran: now, then once
+  // a minute. A failed read clears it rather than showing an old time.
+  useEffect(() => {
+    if (phase !== "watching") return undefined;
+    let live = true;
+    const read = async () => {
+      try {
+        const h = await (AnvilBackend as any)?.health?.();
+        if (live) setWorker(workerSeen(h));
+      } catch {
+        if (live) setWorker(null);
+      }
+    };
+    read();
+    const t = setInterval(read, WORKER_READ_MS);
+    return () => { live = false; clearInterval(t); };
+  }, [phase]);
 
   if (phase === "none" || !snap) return null;
   const job = snap.job || {};
@@ -167,6 +216,12 @@ export const BackgroundExtractionWatch: React.FC<{
         <div style={{ height: 6, background: "var(--paper-3, #E8E9EB)", borderRadius: 3, overflow: "hidden" }}>
           <div data-testid="bg-extraction-bar" style={{ width: pct + "%", height: "100%", background: "var(--accent, var(--brand, #C8FF2B))", transition: "width 0.4s ease" }} />
         </div>
+      )}
+      {worker && (
+        <span className="mono-sm" data-testid="bg-extraction-worker"
+          style={{ color: worker.known && !worker.stale ? "var(--ink-3)" : "var(--rust, var(--ink))" }}>
+          {workerLine(worker)}
+        </span>
       )}
       <span className="mono-sm" style={{ color: "var(--ink-3)" }}>
         {phase === "stopped"

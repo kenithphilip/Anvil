@@ -12,7 +12,8 @@
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { runCronGroup, recordCronHeartbeat } from "../_lib/cron-mux.js";
-import { probeCronFreshness, emitStaleCronAlert } from "../_lib/heartbeat-check.js";
+import { probeCronFreshness, emitStaleCronAlert, bellStaleTick } from "../_lib/heartbeat-check.js";
+import { serviceClient } from "../_lib/supabase.js";
 
 import analyticsRefresh from "../analytics/refresh.js";
 import fxCron           from "../fx/cron.js";
@@ -120,6 +121,9 @@ export default async function handler(req, res) {
     // Vercel log drain.
     const staleness = await probeCronFreshness().catch(() => null);
     const alert = staleness ? emitStaleCronAlert(staleness) : null;
+    // A stale tick also rings each tenant's admin bell (the log line alone
+    // reached nobody in the app). bellStaleTick does nothing while it is fresh.
+    const bell = staleness ? await bellStaleTick(serviceClient(), staleness) : null;
     return json(res, 200, {
       ran_at: startedAt.toISOString(),
       total: results.length,
@@ -131,6 +135,7 @@ export default async function handler(req, res) {
         ? { any_stale: staleness.any_stale, stale_workers: staleness.stale_workers }
         : null,
       staleness_alert: alert,
+      staleness_bell: bell,
     });
   } catch (err) {
     await recordCronHeartbeat("cron/daily", { status: "error", metadata: { error: String(err.message || err).slice(0, 200) } });

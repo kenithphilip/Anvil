@@ -9,14 +9,25 @@
 //   3. Renders the quote PDF and uploads it; signs a 7-day URL.
 //   4. Issues a portal_tokens row with scopes=[quotes, accept_quote]
 //      so the customer can click through to portal/accept_quote.
-//   5. Drafts a `communications` row at status=queued. The reaper
-//      fires it via SendGrid on the next agent tick.
-//   6. Flips the quote to SENT, sets expires_at from validity_days,
-//      sent_at, sent_via='email'.
+//   5. Drafts a `communications` row and sends it in this same request
+//      through the shared send core (_lib/comms-send.js: Graph when
+//      connected, then the switchable mailer, then the generic webhook),
+//      the path invoices/send already uses.
+//   6. Only when a provider accepted the email: flips the quote to SENT,
+//      sets expires_at from validity_days, sent_at, sent_via='email',
+//      learns the customer part numbers and arms the follow-up goals.
+//
+// The response reports what really happened. The email used to be
+// queued here while the screen said "sent". Queued email drains only
+// through the agents/run reaper, which runs only for tenants with a due
+// agent goal, so it often left days late or never. `sent` is true only
+// when a provider accepted the message. When it was not sent, the quote
+// keeps its status (so it can be sent again) and the email row is marked
+// failed, not left queued: the reaper must never send a stale quote
+// later, or send it twice after the operator retries.
 //
 // Reuses the same portal-token + signed-URL machinery that
-// invoices/send (Phase 2 P2.7) shipped, plus the same pattern
-// for queueing the comm row.
+// invoices/send (Phase 2 P2.7) shipped.
 
 import crypto from "node:crypto";
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
@@ -28,6 +39,7 @@ import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "..
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 import { belowFloorLines } from "../_lib/quote-margin.js";
 import { commsRow } from "../_lib/comms-row.js";
+import { sendCommunication, notSentReason } from "../_lib/comms-send.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PORTAL_TOKEN_TTL_DAYS = 30;
@@ -172,17 +184,9 @@ export default async function handler(req, res) {
     }
 
     // Margin-floor guard. This endpoint is already approver-gated, so a
-    // send here is an implicit approval; we record the override for the
-    // audit trail when any line is below its floor.
+    // send here is an implicit approval; the override is recorded for the
+    // audit trail, after the email left, when any line is below its floor.
     const belowFloor = await belowFloorLines(svc, ctx.tenantId, quote.id);
-    if (belowFloor.length) {
-      await recordAudit(ctx, {
-        action: "quote_margin_override",
-        objectType: "quote",
-        objectId: quote.id,
-        detail: belowFloor.length + " line(s) below the margin floor, sent by approver",
-      });
-    }
 
     const recipient = await resolveRecipient(svc, ctx.tenantId, quote, body.to);
     if (!recipient.email) {
@@ -338,9 +342,84 @@ export default async function handler(req, res) {
       }))
       .digest("hex");
 
-    // Flip the quote to SENT, populate sent_at + expires_at +
-    // sent_via, persist the payload_hash so portal/accept_quote
-    // can verify on click.
+    // Draft the email row, then send it in this same request.
+    const draft = await svc.from("communications").insert(commsRow({
+      tenant_id: ctx.tenantId,
+      object_type: "quote",
+      object_id: quote.id,
+      kind: "quote_email",
+      to_addr: recipient.email,
+      subject,
+      body: text,
+      status: "queued",
+      sent_by: ctx.user?.id || null,
+      metadata: {
+        quote_id: quote.id,
+        version: quote.version,
+        share_url: shareUrl,
+        portal_token_id: portal?.id || null,
+        portal_url: portal?.url || null,
+        payload_hash: payloadHash,
+      },
+    })).select("*").single();
+    if (draft.error) throw new Error("comm draft: " + draft.error.message);
+
+    const result = await sendCommunication(svc, ctx, draft.data.id);
+    const commStatus = result?.communication?.status || "queued";
+    const sent = commStatus === "sent";
+
+    if (!sent) {
+      const error = notSentReason(result);
+      // Not sent: the quote keeps its status, so the screen still offers
+      // "Send to customer". A row left queued (no provider configured)
+      // would be fired later by the agents/run reaper, days stale, and a
+      // retry here would then reach the customer twice. Mark it failed.
+      let finalStatus = commStatus;
+      if (commStatus === "queued") {
+        const fail = await svc.from("communications").update({
+          status: "failed",
+          updated_at: new Date().toISOString(),
+          metadata: { ...(result?.communication?.metadata || draft.data.metadata || {}), not_sent_reason: error },
+        }).eq("tenant_id", ctx.tenantId).eq("id", draft.data.id).eq("status", "queued");
+        if (fail?.error) throw new Error("comm not-sent update: " + fail.error.message);
+        finalStatus = "failed";
+      }
+      await recordAudit(ctx, {
+        action: "quote_send_failed",
+        objectType: "quote",
+        objectId: quote.id,
+        detail: recipient.email + " :: v" + quote.version + " :: " + error,
+      });
+      return json(res, 200, {
+        ok: true,
+        sent: false,
+        status: finalStatus,
+        error,
+        provider: result?.provider || null,
+        communication_id: draft.data.id,
+        share_url: shareUrl,
+        portal_url: portal?.url || null,
+        portal_token_id: portal?.id || null,
+        portal_token_error: portal?.error || null,
+        pdf_error: pdfError,
+        quote,
+        armed_goals: [],
+        margin_floor_override: false,
+      });
+    }
+
+    if (belowFloor.length) {
+      await recordAudit(ctx, {
+        action: "quote_margin_override",
+        objectType: "quote",
+        objectId: quote.id,
+        detail: belowFloor.length + " line(s) below the margin floor, sent by approver",
+      });
+    }
+
+    // The email left: flip the quote to SENT, populate sent_at +
+    // expires_at + sent_via, persist the payload_hash so
+    // portal/accept_quote can verify on click.
     const validityDays = quote.validity_days || 30;
     const expiresAt = new Date(Date.now() + validityDays * 86400 * 1000).toISOString();
     const upd = await svc.from("quotes").update({
@@ -443,28 +522,6 @@ export default async function handler(req, res) {
       console.warn("[quotes/send Layer B] write-back batch failed: " + (e && e.message));
     }
 
-    // Queue the email.
-    const draft = await svc.from("communications").insert(commsRow({
-      tenant_id: ctx.tenantId,
-      object_type: "quote",
-      object_id: quote.id,
-      kind: "quote_email",
-      to_addr: recipient.email,
-      subject,
-      body: text,
-      status: "queued",
-      sent_by: ctx.user?.id || null,
-      metadata: {
-        quote_id: quote.id,
-        version: quote.version,
-        share_url: shareUrl,
-        portal_token_id: portal?.id || null,
-        portal_url: portal?.url || null,
-        payload_hash: payloadHash,
-      },
-    })).select("*").single();
-    if (draft.error) throw new Error("comm draft: " + draft.error.message);
-
     await recordAudit(ctx, {
       action: "quote_send",
       objectType: "quote",
@@ -518,6 +575,10 @@ export default async function handler(req, res) {
 
     return json(res, 200, {
       ok: true,
+      sent: true,
+      status: commStatus,
+      error: null,
+      provider: result?.provider || null,
       communication_id: draft.data.id,
       share_url: shareUrl,
       portal_url: portal?.url || null,
@@ -527,7 +588,6 @@ export default async function handler(req, res) {
       quote: upd.data,
       armed_goals: armed.error ? [] : armed.goals,
       margin_floor_override: belowFloor.length > 0,
-      status: "queued",
     });
   } catch (err) { sendError(res, err); }
 }

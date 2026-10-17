@@ -68,6 +68,11 @@ const EMAIL_VIEWS = [
   { id: "support", label: "Complaints and support" },
 ];
 
+// Shown on the disabled Promote and attach buttons (see the note in the
+// component).
+const TRIAGE_ORDER_ACTIONS_OFF =
+  "Promote and attach are off: the server cannot yet turn a chosen email into an order or attach it to one. Create or update the order from Sales Orders.";
+
 const truncate = (s, n) => {
   if (!s) return "—";
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
@@ -121,37 +126,14 @@ const WiredEmailTriage = () => {
     );
   }).slice(0, 6);
 
-  const promote = async () => {
-    if (!selected) return;
-    setBusy(true); setFlash(null);
-    try {
-      await AnvilBackend?.orders?.create?.({ from_email_id: selected.id });
-      setFlash({ kind: "good", msg: "Promoted email to draft order" });
-      window.notifySuccess?.("Promoted to draft order", selected.subject || "");
-      inbox.reload();
-    } catch (err: any) {
-      setFlash({ kind: "bad", msg: String(err.message || err) });
-      window.notifyError?.("Promote failed", err?.message || String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const attachToOrder = async (orderId) => {
-    if (!selected || !orderId) return;
-    setBusy(true); setFlash(null);
-    try {
-      await AnvilBackend?.orders?.update?.(orderId, { attached_email_id: selected.id });
-      setFlash({ kind: "good", msg: `Attached to ${orderId.slice(0, 8)}` });
-      window.notifySuccess?.("Email attached", `Order ${orderId.slice(0, 8)}`);
-      inbox.reload();
-    } catch (err: any) {
-      setFlash({ kind: "bad", msg: String(err.message || err) });
-      window.notifyError?.("Attach failed", err?.message || String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+  // "Promote to order" and "Attach to existing order" are off, with the
+  // reason on screen. Both used to toast success for something that did
+  // not happen: Promote posted { from_email_id } to the orders endpoint,
+  // which ignores that field, so it made a blank DRAFT with no link to the
+  // email; Attach patched an attached_email_id the orders endpoint drops,
+  // so nothing was attached. No small server path takes one chosen email
+  // to an order (inbound/email/draft_orders drains every linked email of
+  // the tenant at once), so they stay off until that path exists.
 
   const requestMissing = async () => {
     if (!selected) return;
@@ -282,10 +264,12 @@ const WiredEmailTriage = () => {
 
                 <Card title="Actions" eyebrow="promote · attach · nudge">
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    <Btn kind="primary" sm disabled={busy || !selected} onClick={promote}
-                         title={!selected ? "Select an email from the inbox first" : "Create a draft sales order from this email"}>
+                    <Btn kind="ghost" sm disabled title={TRIAGE_ORDER_ACTIONS_OFF}>
                       {Icon.zap} Promote to order
                     </Btn>
+                    <div className="mono-sm" data-testid="triage-order-actions-off" style={{ color: "var(--ink-3)" }}>
+                      {TRIAGE_ORDER_ACTIONS_OFF}
+                    </div>
                     <Btn kind="ghost" sm disabled={busy || !selected} onClick={requestMissing}
                          title={!selected ? "Select an email first" : "Send the customer a templated 'missing document' nudge"}>
                       {Icon.send} Request missing doc
@@ -310,7 +294,7 @@ const WiredEmailTriage = () => {
                           <span className="mono-sm" style={{ flex: 1 }}>
                             <b>{draftLabel(o)}</b> · {o.customer?.customer_name || "—"}
                           </span>
-                          <Btn sm disabled={busy} onClick={() => attachToOrder(o.id)}>attach</Btn>
+                          <Btn sm disabled title={TRIAGE_ORDER_ACTIONS_OFF}>attach</Btn>
                         </li>
                       ))}
                     </ul>

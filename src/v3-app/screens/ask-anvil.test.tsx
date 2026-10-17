@@ -112,6 +112,43 @@ describe("AskAnvil — GenOps (P2a inline propose → confirm)", () => {
     expect(getByText(/executed/i)).toBeTruthy(); // success entry in the feed
   });
 
+  // draft_and_send_comms: the draft is saved either way, but "Done" is only for
+  // a message a provider accepted. The server's result says which.
+  const SEND = {
+    id: "p2", action: "draft_and_send_comms",
+    preview: { action: "draft_and_send_comms", to_addr: "19:thread@thread.v2", channel: "teams" },
+    confirm_token: "tok2", expires_at: "2026-07-22T12:00:00Z",
+  };
+
+  it("a draft-and-send the server did not send shows the reason, not Done", async () => {
+    const confirm = vi.fn(async () => ({
+      ok: true, action: SEND.action,
+      result: { sent: false, configured: false, send_error: "not_configured: Teams outbound is not available", communication: { status: "failed" } },
+    }));
+    installBackend(backend({ confirm, proposals: vi.fn(async () => ({ proposals: [SEND] })) }));
+    const mod = await import("./ask-anvil");
+    const { getByText, getByRole, queryByText } = renderScreen(mod.default);
+    await waitFor(() => expect(getByText(/Pending actions/i)).toBeTruthy());
+    fireEvent.click(getByRole("button", { name: /confirm/i }));
+    await waitFor(() => expect(confirm).toHaveBeenCalledWith("tok2"));
+    await waitFor(() => expect(getByText(/the message was not sent: not_configured: Teams outbound is not available/)).toBeTruthy());
+    expect(queryByText(/executed/i)).toBeNull();
+  });
+
+  it("a draft-and-send the server sent still reads as done", async () => {
+    const confirm = vi.fn(async () => ({
+      ok: true, action: SEND.action,
+      result: { sent: true, configured: true, send_error: null, communication: { status: "sent" } },
+    }));
+    installBackend(backend({ confirm, proposals: vi.fn(async () => ({ proposals: [SEND] })) }));
+    const mod = await import("./ask-anvil");
+    const { getByText, getByRole, queryByText } = renderScreen(mod.default);
+    await waitFor(() => expect(getByText(/Pending actions/i)).toBeTruthy());
+    fireEvent.click(getByRole("button", { name: /confirm/i }));
+    await waitFor(() => expect(getByText(/executed/i)).toBeTruthy());
+    expect(queryByText(/not sent/i)).toBeNull();
+  });
+
   it("cancel discards the proposal via copilot.cancel without executing", async () => {
     const cancel = vi.fn(async () => ({ ok: true, cancelled: true }));
     const confirm = vi.fn();

@@ -84,6 +84,13 @@ const RecentMenu: React.FC = () => {
   );
 };
 
+// Why a mark-read did not happen, for the toast. A 403 is the server's
+// admin gate on read state; anything else is shown as the server said it.
+const markReadFailure = (e: any): string =>
+  e?.status === 403
+    ? "Only an admin can mark notifications read, so the unread count stays."
+    : (e?.message || String(e));
+
 const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike: boolean }> = ({ onRoute, isAdminLike }) => {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<NotificationRow[]>([]);
@@ -131,8 +138,13 @@ const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike:
     setBusy(n.id);
     try {
       // Mark read so the user-specific bell count goes down even if
-      // someone else resolves the row later.
-      try { await AnvilBackend?.notifications?.markRead?.(n.id); } catch (_) { /* ignore */ }
+      // someone else resolves the row later. A refusal is shown, not
+      // swallowed: the server marks read for admins only, so an operator's
+      // click used to fail silently and the count never went down. The
+      // deep link below still opens.
+      try { await AnvilBackend?.notifications?.markRead?.(n.id); } catch (e: any) {
+        (window as any).notifyWarn?.("Not marked as read", markReadFailure(e));
+      }
       // Deep-link if the row carries a route hint. Validate that
       // the target route exists in RESOLVERS so a stale link_route
       // (renamed screen, dropped feature) doesn't dump the user on
@@ -168,7 +180,9 @@ const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike:
   };
 
   const onMarkAll = async () => {
-    try { await AnvilBackend?.notifications?.markAllRead?.(); } catch (_) { /* ignore */ }
+    try { await AnvilBackend?.notifications?.markAllRead?.(); } catch (e: any) {
+      (window as any).notifyWarn?.("Not marked as read", markReadFailure(e));
+    }
     load();
   };
 

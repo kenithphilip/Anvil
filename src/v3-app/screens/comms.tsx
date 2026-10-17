@@ -26,22 +26,35 @@ const COMMS_TEMPLATES = [
   { id: "sms-dispatch",   name: "SMS dispatch alert",  channel: "sms",   subject: "—",                                          body: "Your Anvil dispatch {tracking_id} is out for delivery." },
 ];
 
-const commsRowsFromAudit = (resp) => {
+// Rows come from GET /api/communications (the communications table itself,
+// newest first, this tenant only) through the API client, and each row shows
+// the status the server stored. The list used to read the audit log with a
+// bare fetch: no session token, so every read was refused, and the action
+// names (communication.draft / communication.sent) were never written by
+// anything (the server records comm_draft / comm_send). So it was always
+// empty. Even with those names fixed, comm_send is written for failed sends
+// too, so labelling it "sent" would have shown failures as sent.
+const commsRowsFromList = (resp) => {
   if (!resp) return [];
-  const arr = Array.isArray(resp) ? resp : (resp.events || resp.rows || []);
-  return arr.map((a) => {
-    const detail = a.detail || {};
-    return {
-      id: a.id || a.object_id,
-      channel: detail.channel || "email",
-      orderRef: detail.order_ref || detail.order_id || a.object_id || "—",
-      recipient: detail.recipient || detail.to || "—",
-      subject: detail.subject || a.action || "—",
-      status: a.action === "communication.sent" ? "sent" : "draft",
-      created_at: a.created_at,
-    };
-  });
+  const arr = Array.isArray(resp) ? resp : (resp.communications || []);
+  return arr.map((c) => ({
+    id: c.id,
+    channel: c.channel || "email",
+    order_id: c.order_id || null,
+    orderRef: c.order_id || null,
+    recipient: c.to_addr || "(no recipient)",
+    subject: c.subject || "(no subject)",
+    status: c.status || "draft",
+    created_at: c.created_at,
+  }));
 };
+
+// Which stored statuses each tab shows. "Sent" is what a provider accepted
+// (a reply flips a sent row to replied); queued and failed rows show under
+// All with their own status, never as sent.
+const SENT_STATUSES = new Set(["sent", "replied"]);
+const statusChip = (status) =>
+  SENT_STATUSES.has(status) ? "good" : status === "failed" ? "bad" : "warn";
 
 // Read `?new=<templateId>` from the hash. CmdK and other surfaces
 // deep-link via `#/comms?new=nudge` (etc.) to land on the composer
@@ -81,24 +94,16 @@ const WiredComms = () => {
     flash: null,
   });
 
-  const drafts = useFetch(
-    () => fetch("/api/audit?action=communication.draft&limit=100")
-      .then((r) => r.ok ? r.json() : { events: [] })
-      .catch(() => ({ events: [] })),
-    []
-  );
-  const sent = useFetch(
-    () => fetch("/api/audit?action=communication.sent&limit=100")
-      .then((r) => r.ok ? r.json() : { events: [] })
-      .catch(() => ({ events: [] })),
+  // One authenticated read. A failure surfaces in the error banner below
+  // instead of rendering as an empty list.
+  const comms = useFetch(
+    () => AnvilBackend?.communications?.list?.({ limit: 200 }) || Promise.resolve({ communications: [] }),
     []
   );
 
-  const draftRows = commsRowsFromAudit(drafts.data);
-  const sentRows = commsRowsFromAudit(sent.data).map((r) => ({ ...r, status: "sent" }));
-  const allRows = [...draftRows, ...sentRows].sort((a, b) =>
-    new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
-  );
+  const allRows = commsRowsFromList(comms.data);
+  const draftRows = allRows.filter((r) => r.status === "draft");
+  const sentRows = allRows.filter((r) => SENT_STATUSES.has(r.status));
 
   const counts = {
     all: allRows.length,
@@ -145,15 +150,15 @@ const WiredComms = () => {
       });
       setComposer((c) => ({ ...c, busy: false, flash: { kind: "good", msg: "Draft saved" }, recipient: "" }));
       window.notifySuccess?.("Draft saved", composer.recipient);
-      drafts.reload();
+      comms.reload();
     } catch (err: any) {
       setComposer((c) => ({ ...c, busy: false, flash: { kind: "bad", msg: String(err.message || err) } }));
       window.notifyError?.("Draft save failed", err?.message || String(err));
     }
   };
 
-  const loading = drafts.loading && sent.loading;
-  const error = drafts.error && sent.error;
+  const loading = comms.loading;
+  const error = comms.error;
 
   return (
     <>
@@ -162,7 +167,7 @@ const WiredComms = () => {
         title="Communications"
         meta={`${counts.drafts} drafts · ${counts.sent} sent · ${counts.templates} templates`}
         right={<>
-          <Btn icon kind="ghost" sm onClick={() => { drafts.reload(); sent.reload(); }} title="Refresh">{Icon.cycle}</Btn>
+          <Btn icon kind="ghost" sm onClick={() => comms.reload()} title="Refresh">{Icon.cycle}</Btn>
         </>}
       />
       <WSTabs
@@ -173,8 +178,8 @@ const WiredComms = () => {
 
       <div className="ws-content">
         {error ? (
-          <Banner kind="bad" icon={Icon.alert} title="Failed to load communications" action={<Btn sm onClick={() => { drafts.reload(); sent.reload(); }}>Retry</Btn>}>
-            <span className="mono-sm">{String((drafts.error || sent.error)?.message || drafts.error || sent.error)}</span>
+          <Banner kind="bad" icon={Icon.alert} title="Failed to load communications" action={<Btn sm onClick={() => comms.reload()}>Retry</Btn>}>
+            <span className="mono-sm">{String((error as any)?.message || error)}</span>
           </Banner>
         ) : null}
 
@@ -229,7 +234,7 @@ const WiredComms = () => {
                       <td className="mono-sm">{r.orderRef ? String(r.orderRef).slice(0, 12) : "—"}</td>
                       <td className="mono-sm">{r.recipient}</td>
                       <td>{r.subject}</td>
-                      <td><Chip k={r.status === "sent" ? "good" : "warn"}>{r.status}</Chip></td>
+                      <td><Chip k={statusChip(r.status)}>{r.status}</Chip></td>
                       <td>
                         <Btn sm kind="ghost"
                              disabled={!r.order_id && !r.orderId}

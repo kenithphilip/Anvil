@@ -14,6 +14,7 @@
 // looser bounds because they only fire on certain minutes.
 
 import { serviceClient } from "./supabase.js";
+import { notifyAdmins } from "./notifications.js";
 
 export const CRON_EXPECTED_MAX_AGE_MS = {
   "cron/tick":            10 * 60 * 1000,           // every 5 min, alert >10 min stale
@@ -108,4 +109,41 @@ export const emitStaleCronAlert = (summary) => {
     console.warn("[heartbeat-check] " + line);
   }
   return { fired: lines.length, lines };
+};
+
+export const STALE_TICK_BELL_KIND = "cron_tick_stale";
+const MAX_TENANTS_BELLED = 1000;
+
+// The admin bell for a stale 5-minute tick. The console.warn above reaches
+// only the log drain, so a tenant's admins learned the worker was down when
+// their background extractions, inbound email and ERP retries stopped
+// moving. The tick runs that work for every tenant, so each tenant's admins
+// get one bell row (through notifyAdmins, the one bell writer). Bell only:
+// no email. The daily sweep calls this once a day; notifyAdmins drops a
+// repeat with the same key inside five minutes, and the key carries the day.
+// Never throws: a failure here must not fail the daily cron.
+export const bellStaleTick = async (svc, summary) => {
+  if (!summary || !summary.tick_stale) return { tenants: 0, notified: 0 };
+  try {
+    const tick = (summary.workers || []).find((w) => w.worker === "cron/tick") || {};
+    const minutes = Math.round((Number(tick.age_seconds) || 0) / 60);
+    const tenants = await svc.from("tenants").select("id").limit(MAX_TENANTS_BELLED);
+    if (tenants.error) return { tenants: 0, notified: 0, error: tenants.error.message };
+    const day = new Date().toISOString().slice(0, 10);
+    let notified = 0;
+    for (const t of tenants.data || []) {
+      if (!t || !t.id) continue;
+      const r = await notifyAdmins(svc, t.id, {
+        kind: STALE_TICK_BELL_KIND,
+        title: "The background worker has stopped running",
+        body: "The 5-minute worker (cron/tick) last ran " + minutes + " minutes ago. "
+          + "Background extraction, inbound email, ERP retries and agent runs wait until it runs again.",
+        object_type: "cron_worker",
+      }, { roles: ["admin"], dedupKey: "cron_tick_stale:" + day });
+      notified += Number(r && r.notified) || 0;
+    }
+    return { tenants: (tenants.data || []).length, notified };
+  } catch (err) {
+    return { tenants: 0, notified: 0, error: (err && err.message) || String(err) };
+  }
 };

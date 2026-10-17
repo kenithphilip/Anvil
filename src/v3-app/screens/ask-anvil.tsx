@@ -311,6 +311,10 @@ const AskAnvil = () => {
       const resp: any = await AnvilBackend?.copilot?.confirm?.(p.confirm_token);
       if (!resp || resp.ok === false) {
         append({ kind: "error", message: (resp && ((resp.error && resp.error.message) || resp.error)) || "Could not execute that action" });
+      } else if (resp.result && resp.result.sent === false) {
+        // The draft was saved but no provider took the message. Say so; the
+        // old "Done" here read as sent.
+        append({ kind: "error", message: "Draft saved, but the message was not sent: " + (resp.result.send_error || "the server did not confirm the send") });
       } else {
         append({ kind: "text", content: "✓ Done — " + labelForAction(p.action) + " executed.", citations: [] });
       }

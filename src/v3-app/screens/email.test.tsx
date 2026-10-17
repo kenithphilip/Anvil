@@ -124,3 +124,52 @@ describe("Email Triage: Complaints and support filter", () => {
     await waitFor(() => expect(shownSubjects(container)).toHaveLength(5));
   });
 });
+
+// ── Promote and attach ─────────────────────────────────────────────────────
+// Both toasted success for something that did not happen: Promote made a
+// blank DRAFT with no link to the email, and Attach sent a field the orders
+// endpoint drops. No server path takes one chosen email to an order yet, so
+// both are off with the reason on screen, and nothing is written or toasted.
+
+describe("Email Triage: Promote and attach are off, and say why", () => {
+  const REASON = /Promote and attach are off: the server cannot yet turn a chosen email into an order or attach it to one/;
+  const mountWithOrders = async () => {
+    const create = vi.fn(async () => ({ id: "ord-new" }));
+    const update = vi.fn(async () => ({}));
+    installBackend({
+      inbound: { listThreads: vi.fn(async () => ({ messages: ROWS })) },
+      orders: { list: vi.fn(async () => [{ id: "ord-7781", po_number: "7781", status: "DRAFT", customer: { customer_name: "Delta Test" } }]), create, update },
+    });
+    const notifySuccess = vi.fn();
+    (window as any).notifySuccess = notifySuccess;
+    const mod = await import("./email");
+    const utils = renderScreen(mod.default);
+    await waitFor(() => expect(rowFor(utils.container, "PO 7781 attached")).toBeTruthy());
+    fireEvent.click(rowFor(utils.container, "PO 7781 attached")!);
+    return { ...utils, create, update, notifySuccess };
+  };
+
+  it("disables Promote to order and shows the reason", async () => {
+    const { getByRole, getByTestId, create, notifySuccess } = await mountWithOrders();
+    const promote = getByRole("button", { name: /Promote to order/ }) as HTMLButtonElement;
+    expect(promote.disabled).toBe(true);
+    expect(getByTestId("triage-order-actions-off").textContent).toMatch(REASON);
+    fireEvent.click(promote);
+    expect(create).not.toHaveBeenCalled();
+    expect(notifySuccess).not.toHaveBeenCalled();
+  });
+
+  it("disables attach on every order and writes nothing", async () => {
+    const { container, update, notifySuccess } = await mountWithOrders();
+    const attach = await waitFor(() => {
+      const b = Array.from(container.querySelectorAll("button")).find((x) => x.textContent === "attach") as HTMLButtonElement | undefined;
+      expect(b).toBeTruthy();
+      return b!;
+    });
+    expect(attach.disabled).toBe(true);
+    expect(attach.title).toMatch(REASON);
+    fireEvent.click(attach);
+    expect(update).not.toHaveBeenCalled();
+    expect(notifySuccess).not.toHaveBeenCalled();
+  });
+});

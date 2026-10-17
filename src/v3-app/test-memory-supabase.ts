@@ -19,8 +19,8 @@
 // PostgREST does (plain columns, alias:column, and JSON paths with -> and
 // ->>), so a misspelled column reads back undefined. Embedded resources are
 // not supported and throw. Off by default, so existing tests see whole rows.
-// Also: neq, not(col, "in", "(a,b)"), not(col, "is", null), range, and
-// upsert(rows, { onConflict }).
+// Also: neq, ilike, not(col, "in", "(a,b)"), not(col, "is", null), range,
+// and upsert(rows, { onConflict }).
 
 type Row = Record<string, any>;
 
@@ -127,6 +127,12 @@ export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record
       select: (cols?: string) => { if (st.mode === "select" && cols !== undefined) st.cols = cols; return b; },
       eq: (c: string, v: unknown) => { st.filters.push((r: Row) => r[c] === v); return b; },
       neq: (c: string, v: unknown) => { st.filters.push((r: Row) => r[c] !== v); return b; },
+      // Case-insensitive, with % and _ as the wildcards.
+      ilike: (c: string, v: unknown) => {
+        const re = new RegExp("^" + String(v).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".") + "$", "i");
+        st.filters.push((r: Row) => r[c] != null && re.test(String(r[c])));
+        return b;
+      },
       not: (c: string, op: string, v: unknown) => {
         if (op === "in") {
           const banned = String(v).replace(/^\(|\)$/g, "").split(",").map((x) => x.trim());

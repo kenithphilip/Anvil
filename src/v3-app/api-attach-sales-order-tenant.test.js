@@ -31,9 +31,14 @@ const makeSvc = () => ({
       // case-insensitive equality here.
       ilike(c, v) { this._f.push((r) => String(r[c] || "").toLowerCase() === String(v).toLowerCase()); return this; },
       upsert(p) { this._op = "upsert"; this._payload = p; return this; },
+      update(p) { this._op = "update"; this._payload = p; return this; },
       _run() {
         if (this._op === "upsert") {
           rows().push({ ...this._payload });
+          return { data: null, error: null };
+        }
+        if (this._op === "update") {
+          for (const r of rows().filter((x) => this._f.every((fn) => fn(x)))) Object.assign(r, this._payload);
           return { data: null, error: null };
         }
         return { data: rows().filter((r) => this._f.every((fn) => fn(r))), error: null };

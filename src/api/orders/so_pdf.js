@@ -20,6 +20,9 @@ import { classifyOrigin } from "../_lib/pending-so/part-origin.js";
 import { hasUnresolvedBlocker, firstUnresolvedBlocker } from "../_lib/blocking-findings.js";
 import { soLineMoney } from "../_lib/so-line-money.js";
 import { lineDueDate, fmtDueDate } from "../_lib/order-delivery-date.js";
+import { readTermsCheckMode } from "../_lib/terms/mode.js";
+import { readCurrentCheck, readFlags } from "../_lib/terms/check.js";
+import { readDecisions, historyByFlag } from "../_lib/terms/decisions.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -58,9 +61,39 @@ const fmtDate = (d) => {
 
 const addrLines = (...parts) => parts.map((p) => (p == null ? "" : String(p).trim())).filter(Boolean);
 
+const text = (v) => (v == null ? "" : String(v).trim());
+const firstText = (...vals) => vals.map(text).find(Boolean) || "";
+
+// Printed when no source states the payment terms. This used to be a literal
+// "30 Days", a term no document had said.
+export const PAYMENT_TERMS_NOT_STATED = "Not stated";
+
+// The payment term a decision on the terms check settled on (migration 250),
+// or null when no decision has settled one. `flags` are the current check's
+// order_term_flags, `history` is historyByFlag of their decisions.
+//   accept, not_a_deviation  the PO's wording, else the quote's when the PO
+//                            was silent
+//   reject_term              our quote's wording, and the PO's is refused, so
+//                            the PDF never falls back to it
+//   request_amendment        still open: settles nothing
+// With several quotes, the primary quote's flag is read first.
+export const decidedPaymentTerm = (flags, history) => {
+  const list = (flags || []).filter((f) => f && f.clause === "payment_terms" && !f.superseded_at)
+    .sort((a, b) => (a.quote?.primary ? 0 : 1) - (b.quote?.primary ? 0 : 1));
+  for (const f of list) {
+    const current = (history?.get(f.id) || [])[0];
+    if (!current) continue;
+    if (current.decision === "accept" || current.decision === "not_a_deviation") {
+      return { text: firstText(f.po?.text, f.quote?.text) || null, poRefused: false };
+    }
+    if (current.decision === "reject_term") return { text: text(f.quote?.text) || null, poRefused: true };
+  }
+  return null;
+};
+
 // Exported for tests, so the line money can be checked against the Excel
-// export without rendering a PDF.
-export const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, contact, schedules }) => {
+// export without rendering a PDF. decidedTerm is decidedPaymentTerm's result.
+export const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, contact, schedules, decidedTerm = null }) => {
   const soData = order.result?.salesOrder || {};
   const soItems = Array.isArray(soData.lineItems) ? soData.lineItems : [];
 
@@ -105,13 +138,20 @@ export const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, con
     stateCode: consigneeLoc.state_code || buyer.stateCode,
   } : buyer;
 
+  // Payment terms, in this order: the term a decision settled on, the PO's
+  // own terms as extracted, the customer's default, else "Not stated". The
+  // PO's terms are where the reconciler and the terms check read them.
+  const poTerms = decidedTerm?.poRefused ? "" : firstText(soData.customer?.payment_terms, soData.payment_terms);
+
   return {
+    // Written by the ERP sales order attach (attach_sales_order.js).
     voucherNo: order.so_voucher_no || "",
     dated: fmtDate(order.approved_at || order.created_at),
-    modeOfPayment: pick(customer?.default_payment_terms, "30 Days"),
+    modeOfPayment: firstText(decidedTerm?.text, poTerms, customer?.default_payment_terms) || PAYMENT_TERMS_NOT_STATED,
     buyerRef: order.po_number || "",
     regSerialNo: order.registration_serial_no || "",
-    dispatchedThrough: order.dispatch_mode || "By Road",
+    // The order's dispatch mode, else blank. It used to default to "By Road".
+    dispatchedThrough: text(order.dispatch_mode),
     destination: consignee.stateName || "",
     termsOfDelivery: order.delivery_terms || "",
     contactPerson: contact ? pick(contact.name, contact.contact_name) || "" : "",
@@ -132,6 +172,22 @@ export const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, con
     buyer,
     items,
   };
+};
+
+// The decided payment term for one order, read only where the terms check is
+// on: off stores no check, and a shadow check is hidden from the engineers who
+// decide. A mode that cannot be read is an error, not "off", because printing
+// the PO's term over a refusal of it is the mistake this read prevents. A
+// database without migration 250 has no decisions to read.
+const readDecidedPaymentTerm = async (svc, tenantId, orderId) => {
+  const m = await readTermsCheckMode(svc, tenantId);
+  if (m.error && m.migrated !== false) throw new Error("tenant_settings: " + m.error);
+  if (m.mode !== "on") return null;
+  const check = await readCurrentCheck(svc, tenantId, orderId);
+  if (!check) return null;
+  const flags = (await readFlags(svc, tenantId, check.id)).filter((f) => f.clause === "payment_terms");
+  if (!flags.length) return null;
+  return decidedPaymentTerm(flags, historyByFlag(await readDecisions(svc, tenantId, flags.map((f) => f.id))));
 };
 
 export default async function handler(req, res) {
@@ -229,8 +285,9 @@ export default async function handler(req, res) {
       const schQ = await svc.from("order_schedule_lines").select("line_index, scheduled_date").eq("tenant_id", ctx.tenantId).eq("order_id", orderId);
       if (!schQ.error) schedules = schQ.data || [];
     } catch (_) { /* optional */ }
+    const decidedTerm = await readDecidedPaymentTerm(svc, ctx.tenantId, orderId);
 
-    const data = buildSalesOrderData({ order, customer, consigneeLoc, seller, contact, schedules });
+    const data = buildSalesOrderData({ order, customer, consigneeLoc, seller, contact, schedules, decidedTerm });
     const pdfBuffer = await renderSalesOrder(data);
 
     if (format === "share") {

@@ -21,6 +21,12 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { matchSalesOrderToOrders, comparability, poKey } from "../_lib/sales-order-match.js";
 
+// The voucher number the read gave, trimmed, or "" when it gave none.
+const voucherOf = (extracted) => {
+  const v = extracted?.voucher_no;
+  return typeof v === "string" || typeof v === "number" ? String(v).trim() : "";
+};
+
 export default async function handler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
@@ -121,6 +127,19 @@ export default async function handler(req, res) {
       throw new Error("order_documents: " + link.error.message);
     }
 
+    // The ERP's own number for this sales order, onto the order it answers, so
+    // the SO PDF prints it (orders.so_voucher_no, migration 162). The register
+    // already showed this number from the read; nothing wrote it to the order,
+    // so the PDF's Voucher No. was always blank. Written only when the read
+    // found one: a number that did not read leaves the order's number alone,
+    // and a document read as something other than a sales order has none.
+    const voucherNo = compare.reason === "not_a_sales_order" ? "" : voucherOf(extracted);
+    if (voucherNo) {
+      const up = await svc.from("orders").update({ so_voucher_no: voucherNo })
+        .eq("tenant_id", ctx.tenantId).eq("id", order.id);
+      if (up.error) throw new Error("orders so_voucher_no: " + up.error.message);
+    }
+
     await recordAudit(ctx, {
       action: "order_sales_order_attached", objectType: "order", objectId: order.id,
       detail: {
@@ -129,6 +148,7 @@ export default async function handler(req, res) {
         reference: match.reference ?? null,
         overrode_reference: !!match.overrode_reference,
         comparable: compare.comparable,
+        so_voucher_no: voucherNo || null,
       },
     });
 

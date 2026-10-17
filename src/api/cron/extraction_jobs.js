@@ -40,6 +40,7 @@ import { extractTextLayer } from "../_lib/docai/text_layer.js";
 import { planDensityChunking } from "../_lib/docai/density-plan.js";
 import { buildWindowBodyText } from "../_lib/docai/text-row-chunker.js";
 import { autoReconcileOrder } from "../_lib/order-reconcile.js";
+import { payloadHashAfterWrite } from "../_lib/payload-hash.js";
 
 // Real tenant settings, cached for the life of one tick.
 //
@@ -779,7 +780,9 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
     // only for a writeback that happened.
     let wroteOrderLines = false;
     if (orderId && PO_SHAPED.has(jobKind) && !classifiedNonPo) {
-      const ord = await svc.from("orders").select("result, preflight_payload").eq("tenant_id", job.tenant_id).eq("id", orderId).maybeSingle();
+      // customer_id, po_number and payload_hash are read for the approval hash
+      // below; result and preflight_payload are merged into.
+      const ord = await svc.from("orders").select("result, preflight_payload, customer_id, po_number, payload_hash").eq("tenant_id", job.tenant_id).eq("id", orderId).maybeSingle();
       if (ord.error) throw new Error("order read (merge): " + ord.error.message);
       const nextResult = { ...(ord.data?.result || {}) };
       nextResult.salesOrder = {
@@ -794,8 +797,12 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
         last_extracted_at: new Date().toISOString(),
         extraction_job_id: job.id,
       };
+      // New lines are a new document to approve: the approval hash moves when
+      // they differ from the order's, so an approver who loaded the page-1
+      // preview is refused as stale. The same lines leave it.
+      const stamp = payloadHashAfterWrite(ord.data, { ...(ord.data || {}), result: nextResult });
       const wb = await svc.from("orders")
-        .update({ result: nextResult, preflight_payload: nextPreflight })
+        .update({ result: nextResult, preflight_payload: nextPreflight, ...(stamp ? { payload_hash: stamp } : {}) })
         .eq("tenant_id", job.tenant_id).eq("id", orderId);
       if (wb.error) {
         // Do NOT swallow a writeback failure into 'completed' — that strands the

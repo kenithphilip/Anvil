@@ -27,7 +27,7 @@ import { recordAudit, recordEvent } from "./audit.js";
 import { reconcilePoAgainstQuotes, comparePaymentTerms, compareIncoterms, parseIncoterm } from "./quote-reconcile.js";
 import { modBomFinding, provisionalParts, MOD_BOM_FINDING_CODE } from "./mod-parts.js";
 import { mergeBlockersForward, isUnresolvedBlocker } from "./blocking-findings.js";
-import { computeOrderPayloadHash } from "./payload-hash.js";
+import { computeOrderPayloadHash, payloadHashAfterWrite } from "./payload-hash.js";
 import { linkOrderOpportunityFromQuotes } from "./order-opportunity.js";
 import { runTermsAfterReconcile } from "./terms/check.js";
 import { autoAnomalyCheck } from "./order-anomaly-check.js";
@@ -105,8 +105,9 @@ export const reconcileOrderQuotes = async (svc, ctx, orderId, opts = {}) => {
     // were absent from this select, so the incoterm comparison silently read
     // undefined off the order and fell through to the extracted payload.
     // status and updated_at serve the server trigger; po_number keeps the
-    // payload hash the same one payload-hash.js computes everywhere else.
-    .select("id, status, updated_at, po_number, customer_id, result, quote_id, quote_number, rule_findings, incoterm_code, delivery_terms")
+    // payload hash the same one payload-hash.js computes everywhere else, and
+    // payload_hash is the stored one this run moves when it changes a line.
+    .select("id, status, updated_at, po_number, customer_id, result, quote_id, quote_number, rule_findings, incoterm_code, delivery_terms, payload_hash")
     .eq("tenant_id", ctx.tenantId).eq("id", orderId).maybeSingle();
   if (orderQ.error) throw new Error("orders read: " + orderQ.error.message);
   if (!orderQ.data) return { status: "not_found" };
@@ -341,12 +342,17 @@ export const reconcileOrderQuotes = async (svc, ctx, orderId, opts = {}) => {
   // The hash of the order as this run leaves it. See the ifChanged check.
   quoteReconciliation.payload_hash = computeOrderPayloadHash({ ...order, result: newResult });
 
+  // The approval hash moves when this run changed what the approver approves
+  // (it filled a line's HSN from the quote), so an approver who loaded the
+  // order before is refused as stale. A run that changed nothing leaves it.
+  const stamp = payloadHashAfterWrite(order, { ...order, result: newResult });
   let write = svc.from("orders")
     .update({
       result: newResult,
       rule_findings: nextFindings,
       quote_id: primary?.quote_id || order.quote_id || null,
       quote_number: primary?.quote_number || order.quote_number || null,
+      ...(stamp ? { payload_hash: stamp } : {}),
     })
     .eq("tenant_id", ctx.tenantId).eq("id", orderId);
   // Compare-and-set for the server trigger. The trigger reads the order after

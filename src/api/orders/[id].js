@@ -8,7 +8,7 @@ import { lineCandidates, lineSapCandidates } from "../_lib/item-mapper.js";
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 import { promoteApprovedOrder } from "../eval/promote.js";
 import { requireOrderPatchAction } from "../_lib/order-write-gate.js";
-import { computeOrderPayloadHash } from "../_lib/payload-hash.js";
+import { payloadHashAfterWrite } from "../_lib/payload-hash.js";
 import { autoReconcileOrder, hasReconcilableLines, AUTO_RECONCILE_STATUSES } from "../_lib/order-reconcile.js";
 import { hasUnresolvedBlocker, firstUnresolvedBlocker, mergeBlockersForward, resolveFinding } from "../_lib/blocking-findings.js";
 import { IDENTITY_KEYS, planIdentityEdit } from "../_lib/order-identity.js";
@@ -255,30 +255,24 @@ export default async function handler(req, res) {
 
       // Stamp orders.payload_hash so a SCANNED PO can be approved at all.
       // Approve refuses without approval.payloadHash, and the workspace reads
-      // it from this column — but it was only ever written on the quote path,
+      // it from this column, but it was only ever written on the quote path,
       // so an order created from a scanned PO could never be approved and
       // therefore never reach Tally.
       //
-      // Scanned POs (no quote_id): keep it current on every content edit and
-      // on send-for-review, so the stored hash always describes the order as
-      // it stands. Quote-derived orders: only fill a MISSING hash — the value
-      // carried over from quotes/send.js identifies the exact quote the
-      // customer accepted, and overwriting it would break that linkage.
+      // It moves on every content edit, quote-priced or not, and is filled on
+      // send-for-review, so the approve check above refuses an approver who
+      // loaded the order before an edit. A write that leaves the content as it
+      // was keeps the stored hash, including one carried over from a quote
+      // (payloadHashAfterWrite in payload-hash.js).
       //
       // An identity change counts as a content edit: the hash covers the
       // customer (payload-hash.js), so an approver who loaded the order
-      // before the customer moved is refused as stale. A customer change can
-      // unlink the old customer's quote, and then the order is no longer
-      // quote-derived.
+      // before the customer moved is refused as stale.
       const movingToReview = body.status === "PENDING_REVIEW" && prev.status !== "PENDING_REVIEW";
       const resultEdited = "result" in patch;
       if (movingToReview || resultEdited || identityChanged) {
-        const isQuoteDerived = !!("quote_id" in patch ? patch.quote_id : prev.quote_id);
-        if (!isQuoteDerived || !prev.payload_hash) {
-          const nextResult = resultEdited ? patch.result : prev.result;
-          const hash = computeOrderPayloadHash({ ...prev, ...patch, result: nextResult });
-          if (hash) patch.payload_hash = hash;
-        }
+        const hash = payloadHashAfterWrite(prev, { ...prev, ...patch });
+        if (hash) patch.payload_hash = hash;
       }
 
       const { data, error } = await svc.from("orders").update(patch).eq("tenant_id", ctx.tenantId).eq("id", id).select("*").single();

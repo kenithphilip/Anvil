@@ -76,3 +76,26 @@ export const computeOrderPayloadHash = (order) => {
   if (!payload.lines.length && !payload.po_number) return null;
   return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 };
+
+// Public: the hash to store after a write that turns `before` into `after`,
+// or null to leave the stored one as it is. Every writer of an order's lines
+// or customer calls it: the PATCH, the quote reconcile and the background
+// extraction writeback.
+//
+// It moves when what the approver approves moved, whoever wrote it and
+// whether or not a quote priced the order. It used to stop moving once an
+// order had a quote_id, and the reconcile links a quote to every scanned PO
+// it matches, so an edit after the approver loaded such an order was still
+// approved.
+//
+// It does not move for a write that changes none of that: a re-save of the
+// same lines, a reconcile that filled nothing, a status change. So an
+// approver's hash stays good while the order is what they saw, and an order
+// converted from a quote keeps the quote's hash (quotes/convert.js) until its
+// content changes. An order with no stored hash gets one.
+export const payloadHashAfterWrite = (before, after) => {
+  const next = computeOrderPayloadHash(after);
+  if (!next) return null;
+  if (before?.payload_hash && computeOrderPayloadHash(before) === next) return null;
+  return next;
+};

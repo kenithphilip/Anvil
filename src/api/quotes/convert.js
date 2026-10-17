@@ -18,8 +18,9 @@
 //
 // The new order is intentionally DRAFT so the operator can run
 // the existing approval + push flow on top. The quote's
-// payload_hash carries forward as orders.payload_hash so the
-// approval gate recognises the source.
+// payload_hash carries forward as orders.payload_hash and stays
+// until the order's lines or customer change; then it moves like
+// any order's (payloadHashAfterWrite in _lib/payload-hash.js).
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";

@@ -56,25 +56,29 @@ const WiredTallyPush = () => {
 
   // The tenant's sales-order processing mode (Admin > Sales-order
   // processing). In Mode B the server refuses every push (tally/push.js),
-  // so the screen says why and offers no push button. Until the mode is
-  // read, or if it cannot be read, the screen behaves as Mode A, which is
-  // also how the server reads an unreadable mode.
-  const [soMode, setSoMode] = useState<{ mode: "A" | "B"; label?: string } | null>(null);
+  // so the screen says why, lists the approved orders and offers no push
+  // button. While the mode loads, push buttons render disabled, so a quick
+  // click cannot reach a push that Mode B refuses. A mode that cannot be
+  // read counts as Mode A, which is also how the server reads it.
+  const [modeState, setModeState] = useState<"loading" | "A" | "B">("loading");
+  const [modeLabel, setModeLabel] = useState<string | undefined>(undefined);
   useEffect(() => {
     let live = true;
     Promise.resolve((AnvilBackend as any)?.docai?.soProcessingMode?.())
       .then((r: any) => {
         if (!live) return;
         const m = r?.mode === "B" ? "B" : "A";
-        setSoMode({ mode: m, label: r?.modes?.[m]?.label });
+        setModeLabel(r?.modes?.[m]?.label);
+        setModeState(m);
       })
-      .catch(() => { if (live) setSoMode(null); });
+      .catch(() => { if (live) setModeState("A"); });
     return () => { live = false; };
   }, []);
-  const modeB = soMode?.mode === "B";
+  const modeB = modeState === "B";
+  const modeA = modeState === "A";
 
   const handlePush = async (order) => {
-    if (!canPush || modeB) return;
+    if (!canPush || !modeA) return;
     setBusyId(order.id);
     setFlash(null);
     try {
@@ -93,8 +97,10 @@ const WiredTallyPush = () => {
     <>
       <WSTitle
         eyebrow="Finance · Tally"
-        title="Push queue"
-        meta={`${queueRows.length} queued · ${pushedToday.length} pushed today · ${failed.length} failed · ${amendOrders.length} amend`}
+        title={modeB ? "Approved orders" : "Push queue"}
+        meta={modeB
+          ? `${queueRows.length} approved · ${amendOrders.length} amend`
+          : `${queueRows.length} queued · ${pushedToday.length} pushed today · ${failed.length} failed · ${amendOrders.length} amend`}
         right={<>
           <Btn icon kind="ghost" sm onClick={() => { queue.reload(); pushed.reload(); }} title="Refresh">{Icon.cycle}</Btn>
         </>}
@@ -102,7 +108,7 @@ const WiredTallyPush = () => {
 
       <div className="ws-content">
         {modeB && (
-          <Banner kind="info" icon={Icon.lock} title={"Push is off in Mode B" + (soMode?.label ? ": " + soMode.label : "")}>
+          <Banner kind="info" icon={Icon.lock} title={"Push is off in Mode B" + (modeLabel ? ": " + modeLabel : "")}>
             <span className="mono-sm">
               Your team enters these sales orders in Tally by hand, and Anvil checks them against the PO.
               Anvil does not push vouchers in Mode B, so this screen offers no push. An admin can switch to
@@ -111,7 +117,7 @@ const WiredTallyPush = () => {
           </Banner>
         )}
 
-        {!modeB && !bridge.loading && !bridge.configured && (
+        {modeA && !bridge.loading && !bridge.configured && (
           <Banner kind="warn" icon={Icon.alert} title="Tally bridge not configured">
             <span className="mono-sm">
               Set <code>TALLY_BRIDGE_URL</code> and <code>TALLY_BRIDGE_TOKEN</code> in Vercel
@@ -120,7 +126,7 @@ const WiredTallyPush = () => {
           </Banner>
         )}
 
-        {!modeB && !canPush && (
+        {modeA && !canPush && (
           <Banner kind="warn" icon={Icon.lock} title="Push permission required">
             <span className="mono-sm">Your role cannot push to Tally. Contact an admin or finance manager to enable <b>tally.push</b>.</span>
           </Banner>
@@ -138,18 +144,27 @@ const WiredTallyPush = () => {
           </Banner>
         ) : null}
 
-        <KPIRow cols={4}>
-          <KPI lbl="Queued"        v={String(queueRows.length)}  d={queueRows.length ? `oldest ${ageLabel(queueRows[0]?.updated_at || queueRows[0]?.created_at)}` : "all clear"} live={queueRows.length > 0} />
-          <KPI lbl="Pushed today"  v={String(pushedToday.length)} d="EXPORTED_TO_TALLY" dKind={pushedToday.length ? "up" : ""} />
-          <KPI lbl="Failed"        v={String(failed.length)}     d="needs retry" dKind={failed.length ? "down" : ""} />
-          <KPI lbl="Amendments"    v={String(amendOrders.length)} d="re-hash + push" />
-        </KPIRow>
+        {modeB ? (
+          // Mode B: the clerk keys these orders in Tally, so nothing here
+          // waits on a push and the push counters do not apply.
+          <KPIRow cols={2}>
+            <KPI lbl="Approved"    v={String(queueRows.length)}  d={queueRows.length ? `oldest ${ageLabel(queueRows[0]?.updated_at || queueRows[0]?.created_at)}` : "none"} />
+            <KPI lbl="Amendments"  v={String(amendOrders.length)} d="pending" />
+          </KPIRow>
+        ) : (
+          <KPIRow cols={4}>
+            <KPI lbl="Queued"        v={String(queueRows.length)}  d={queueRows.length ? `oldest ${ageLabel(queueRows[0]?.updated_at || queueRows[0]?.created_at)}` : "all clear"} live={queueRows.length > 0} />
+            <KPI lbl="Pushed today"  v={String(pushedToday.length)} d="EXPORTED_TO_TALLY" dKind={pushedToday.length ? "up" : ""} />
+            <KPI lbl="Failed"        v={String(failed.length)}     d="needs retry" dKind={failed.length ? "down" : ""} />
+            <KPI lbl="Amendments"    v={String(amendOrders.length)} d="re-hash + push" />
+          </KPIRow>
+        )}
 
-        <Card title="Push queue" eyebrow="approved · awaiting Tally" flush>
+        <Card title={modeB ? "Approved orders" : "Push queue"} eyebrow={modeB ? "approved · keyed in Tally by hand" : "approved · awaiting Tally"} flush>
           {queue.loading ? (
             <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading queue…</div>
           ) : queueRows.length === 0 ? (
-            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Nothing waiting to push.</div>
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>{modeB ? "No approved orders." : "Nothing waiting to push."}</div>
           ) : (
             <table className="tbl">
               <thead><tr>
@@ -177,8 +192,8 @@ const WiredTallyPush = () => {
                       {!modeB && (
                         <td>
                           <Btn sm kind="primary"
-                               disabled={!canPush || busyId === o.id || !bridge.configured}
-                               title={!bridge.configured ? "Tally bridge not configured" : undefined}
+                               disabled={!modeA || !canPush || busyId === o.id || !bridge.configured}
+                               title={!modeA ? "Checking the sales-order processing mode" : !bridge.configured ? "Tally bridge not configured" : undefined}
                                onClick={() => handlePush(o)}>
                             {busyId === o.id ? "pushing…" : <>push {Icon.send}</>}
                           </Btn>
@@ -225,7 +240,7 @@ const WiredTallyPush = () => {
           {pushed.loading ? (
             <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Loading…</div>
           ) : pushedRows.length === 0 ? (
-            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>Nothing pushed yet.</div>
+            <div className="body" style={{ padding: 22, textAlign: "center", color: "var(--ink-3)" }}>{modeB ? "Anvil does not push in Mode B." : "Nothing pushed yet."}</div>
           ) : (
             <table className="tbl">
               <thead><tr>

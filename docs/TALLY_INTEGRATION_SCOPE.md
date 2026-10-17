@@ -233,7 +233,7 @@ It also has defects that matter here:
 **Drift reconciler.** `src/api/_lib/tally-reconciler.js:157-159, 222-228, 325-329, 463-470`. Partial and broken:
 - it selects columns that do not exist, so every voucher reads as missing;
 - its auto-fix inserts the wrong columns;
-- `markStatus` writes order statuses that are not in the enum.
+- `markStatus` writes order statuses that are not in the enum (fixed in plan C-4, fix/tally-mark-reconciled-status).
 
 **Mode A/B.** `221_so_processing_mode.sql:1-45`. Wired. It is the only switch over who writes to Tally. The gate exists only at `push.js:82-97` and fails open (84-88). Enqueue, retry, confirm and validate do not read it.
 

@@ -468,10 +468,26 @@ const loadDriftCaughtValueInr = async (svc, tenantId, runId) => {
 // and TALLY_IMPORTED, which are not order_status values (001_init.sql),
 // so Postgres refused the whole update and "Mark reconciled" always
 // failed.
+//
+// "reconciled" is refused (409) unless the order is EXPORTED_TO_TALLY or
+// already RECONCILED. On a Mode B order, tally_status 'reconciled' means
+// a clean three-way check against the Tally SO (plan R-F2, C-12), and a
+// manual mark is not that evidence.
+//
+// The write is conditional on the status read above, so a status that
+// moved in between (a drift check that found the voucher cancelled in
+// Tally, say) is not overwritten: the caller gets a 409 and reloads.
 const MARK_FROM_EXPORTED = new Map([
   ["reconciled", "RECONCILED"],
   ["failed", "FAILED_TALLY_IMPORT"],
 ]);
+const RECONCILE_FROM = new Set(["EXPORTED_TO_TALLY", "RECONCILED"]);
+
+const conflict = (message) => {
+  const err = new Error(message);
+  err.status = 409;
+  return err;
+};
 
 export const markStatus = async (svc, params) => {
   const { tenantId, orderId, status, tallyVoucherId, triggeredBy } = params;
@@ -484,13 +500,19 @@ export const markStatus = async (svc, params) => {
     err.status = 404;
     throw err;
   }
+  const fromStatus = current.data.status;
+  if (status === "reconciled" && !RECONCILE_FROM.has(fromStatus)) {
+    throw conflict("Only an order pushed to Tally can be marked reconciled; this order is " + fromStatus);
+  }
   const patch = { tally_status: status };
-  if (current.data.status === "EXPORTED_TO_TALLY" && MARK_FROM_EXPORTED.has(status)) {
+  if (fromStatus === "EXPORTED_TO_TALLY" && MARK_FROM_EXPORTED.has(status)) {
     patch.status = MARK_FROM_EXPORTED.get(status);
   }
   const orderUpdate = await svc.from("orders").update(patch)
-    .eq("id", orderId).eq("tenant_id", tenantId).select("*").single();
+    .eq("id", orderId).eq("tenant_id", tenantId).eq("status", fromStatus)
+    .select("*").maybeSingle();
   if (orderUpdate.error) throw new Error(orderUpdate.error.message);
+  if (!orderUpdate.data) throw conflict("Order changed; reload");
 
   if (tallyVoucherId) {
     await svc.from("tally_voucher_records").update({

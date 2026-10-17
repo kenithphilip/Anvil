@@ -8,7 +8,10 @@
 //
 // Now tally_status takes the operator's value, and orders.status moves only
 // from EXPORTED_TO_TALLY (a voucher Anvil pushed, Mode A). A Mode B order
-// stays APPROVED. Each test drives the real markStatus, or the real handler,
+// stays APPROVED, and cannot be marked reconciled by hand: on a Mode B order
+// that value means a clean three-way check (plan R-F2, C-12). The write is
+// conditional on the status it read, so a status that moved in between is
+// not overwritten. Each test drives the real markStatus, or the real handler,
 // against an in-memory Supabase stand-in that enforces the same constraints
 // as the database: the order_status enum and the tally_status CHECK.
 // Invented fixtures.
@@ -23,7 +26,9 @@ const ORDER_STATUS = new Set([
 // orders.tally_status CHECK, from supabase/migrations/005_close_remaining_gaps.sql.
 const TALLY_STATUS = new Set(["idle", "pending", "dry_run_ok", "exported", "imported", "failed", "reconciled"]);
 
-const H = vi.hoisted(() => ({ store: {}, seq: 0 }));
+// H.beforeUpdate, when set, runs just before an update matches its rows: a
+// write that lands between markStatus's read and its own write.
+const H = vi.hoisted(() => ({ store: {}, seq: 0, beforeUpdate: null }));
 
 // A Postgres refusal for a value the column cannot hold, or null when the
 // row is valid.
@@ -51,6 +56,11 @@ const from = (table) => {
       const out = items.map((it) => ({ id: table + "-" + (++H.seq), ...it }));
       store.push(...out);
       return { out };
+    }
+    if (st.op === "update" && H.beforeUpdate) {
+      const fn = H.beforeUpdate;
+      H.beforeUpdate = null;
+      fn(table);
     }
     const matched = store.filter(hit);
     if (st.op === "update") {
@@ -121,6 +131,7 @@ const approver = { user: { id: "u-1" }, tenantId: TENANT, role: "admin", anonymo
 beforeEach(() => {
   H.store = {};
   H.seq = 0;
+  H.beforeUpdate = null;
 });
 
 describe("markStatus writes a valid status", () => {
@@ -147,11 +158,28 @@ describe("markStatus writes a valid status", () => {
     expect(table("tally_reconciliation_runs")[0]).toMatchObject({ vouchers_clean: 0, vouchers_drifted: 1 });
   });
 
-  it("keeps a Mode B order APPROVED and records the Tally state on tally_status", async () => {
+  it("refuses to mark a Mode B (APPROVED) order reconciled with a 409 and writes nothing", async () => {
     H.store.orders = [order("o-1", "APPROVED")];
+    H.store.tally_voucher_records = [{ id: "vr-1", tenant_id: TENANT, order_id: "o-1", status: "exported", tally_voucher_id: null }];
+    await expect(markStatus(svc, {
+      tenantId: TENANT, orderId: "o-1", status: "reconciled", tallyVoucherId: "TV-9", triggeredBy: "u-1",
+    })).rejects.toMatchObject({ status: 409 });
+    expect(table("orders")[0]).toMatchObject({ status: "APPROVED", tally_status: "exported" });
+    expect(table("tally_voucher_records")[0]).toMatchObject({ tally_voucher_id: null });
+    expect(table("tally_reconciliation_runs")).toHaveLength(0);
+  });
+
+  it("keeps a Mode B order APPROVED when it is marked failed", async () => {
+    H.store.orders = [order("o-1", "APPROVED")];
+    const out = await markStatus(svc, { tenantId: TENANT, orderId: "o-1", status: "failed", triggeredBy: "u-1" });
+    expect(out.order).toMatchObject({ status: "APPROVED", tally_status: "failed" });
+    expect(table("orders")[0]).toMatchObject({ status: "APPROVED", tally_status: "failed" });
+  });
+
+  it("marks an already RECONCILED order reconciled again without moving it", async () => {
+    H.store.orders = [order("o-1", "RECONCILED")];
     const out = await markStatus(svc, { tenantId: TENANT, orderId: "o-1", status: "reconciled", triggeredBy: "u-1" });
-    expect(out.order).toMatchObject({ status: "APPROVED", tally_status: "reconciled" });
-    expect(table("orders")[0]).toMatchObject({ status: "APPROVED", tally_status: "reconciled" });
+    expect(out.order).toMatchObject({ status: "RECONCILED", tally_status: "reconciled" });
   });
 
   it("records 'imported' on tally_status without changing the order status", async () => {
@@ -164,13 +192,32 @@ describe("markStatus writes a valid status", () => {
 
   it.each([
     ["EXPORTED_TO_TALLY"], ["APPROVED"], ["FAILED_TALLY_IMPORT"], ["RECONCILED"], ["CANCELLED"],
-  ])("every mark on a %s order succeeds and leaves an enum status", async (start) => {
+  ])("every mark on a %s order leaves an enum status, or is refused with a 409", async (start) => {
     for (const status of ["reconciled", "failed", "imported"]) {
       H.store.orders = [order("o-1", start)];
-      const out = await markStatus(svc, { tenantId: TENANT, orderId: "o-1", status, triggeredBy: "u-1" });
+      const p = markStatus(svc, { tenantId: TENANT, orderId: "o-1", status, triggeredBy: "u-1" });
+      if (status === "reconciled" && start !== "EXPORTED_TO_TALLY" && start !== "RECONCILED") {
+        await expect(p).rejects.toMatchObject({ status: 409 });
+        expect(table("orders")[0]).toMatchObject({ status: start, tally_status: "exported" });
+        continue;
+      }
+      const out = await p;
       expect(ORDER_STATUS.has(out.order.status)).toBe(true);
       expect(out.order.tally_status).toBe(status);
     }
+  });
+
+  it("does not overwrite a status that moved after the read, and answers 409", async () => {
+    // A drift check finds the voucher cancelled in Tally and fails the order
+    // between markStatus's read and its write.
+    H.store.orders = [order("o-1", "EXPORTED_TO_TALLY")];
+    H.beforeUpdate = (t) => {
+      if (t === "orders") Object.assign(H.store.orders[0], { status: "FAILED_TALLY_IMPORT", tally_status: "failed" });
+    };
+    await expect(markStatus(svc, { tenantId: TENANT, orderId: "o-1", status: "reconciled", triggeredBy: "u-1" }))
+      .rejects.toMatchObject({ status: 409, message: "Order changed; reload" });
+    expect(table("orders")[0]).toMatchObject({ status: "FAILED_TALLY_IMPORT", tally_status: "failed" });
+    expect(table("tally_reconciliation_runs")).toHaveLength(0);
   });
 
   it("refuses another tenant's order with a 404 and writes nothing", async () => {
@@ -191,6 +238,15 @@ describe("POST /api/tally/reconcile mode=mark, through the real markStatus", () 
     expect(out.status).toBe(200);
     expect(out.body).toMatchObject({ mode: "mark", order: { id: "o-1", status: "RECONCILED", tally_status: "reconciled" } });
     expect(table("orders")[0]).toMatchObject({ status: "RECONCILED", tally_status: "reconciled" });
+  });
+
+  it("answers 409 for a Mode B order, which a manual mark cannot verify", async () => {
+    H.store.orders = [order("o-1", "APPROVED")];
+    const out = await call(tallyReconcile, { body: { mode: "mark", orderId: "o-1", status: "reconciled" }, ctx: approver });
+    expect(out.status).toBe(409);
+    expect(out.body.error.message).toBe("Only an order pushed to Tally can be marked reconciled; this order is APPROVED");
+    expect(table("orders")[0]).toMatchObject({ status: "APPROVED", tally_status: "exported" });
+    expect(table("tally_reconciliation_runs")).toHaveLength(0);
   });
 
   it("answers 404 for another tenant's order instead of failing the request", async () => {

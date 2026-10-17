@@ -1,8 +1,9 @@
 // Tally Push in Mode B. The server refuses every push in Mode B
-// (tally/push.js returns 409), so the screen says why push is off and offers
-// no push button. Mode A is unchanged: each queued order has a push button
-// that calls tally.push. Renders the real screen against a stubbed client.
-// Invented fixtures.
+// (tally/push.js returns 409), so the screen says why push is off, offers no
+// push button and drops the push-queue wording. While the mode loads, the
+// push button is disabled. Mode A is unchanged: each queued order has a push
+// button that calls tally.push. Renders the real screen against a stubbed
+// client. Invented fixtures.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { fireEvent, waitFor } from "@testing-library/react";
@@ -22,10 +23,10 @@ const QUEUED = [{
   created_at: "2026-10-01T09:00:00Z", updated_at: "2026-10-01T09:00:00Z",
 }];
 
-const mount = async (soProcessingMode: any) => {
+const mount = async (soProcessingMode: any, queued: any[] = QUEUED) => {
   const push = vi.fn(async () => ({ ok: true }));
   installBackend({
-    orders: { list: vi.fn(async (q: any) => ({ orders: q?.status === "APPROVED" ? QUEUED : [] })) },
+    orders: { list: vi.fn(async (q: any) => ({ orders: q?.status === "APPROVED" ? queued : [] })) },
     docai: { soProcessingMode },
     // The bridge is configured, so in Mode A the push button is enabled.
     health: vi.fn(async () => ({ integrations: [{ id: "tally", configured: true }] })),
@@ -58,6 +59,42 @@ describe("Tally Push: Mode B", () => {
     expect(push).not.toHaveBeenCalled();
     expect(read).toHaveBeenCalled();
   });
+
+  it("describes approved orders, not a push queue", async () => {
+    const { container } = await mount(vi.fn(async () => ({ mode: "B", modes: MODES, applied: true })));
+    await waitFor(() => expect(container.textContent).toContain("Push is off in Mode B"));
+    await waitFor(() => expect(container.textContent).toContain("PO-T-001"));
+    const text = container.textContent || "";
+    expect(text).toContain("Approved orders");
+    expect(text).toContain("approved · keyed in Tally by hand");
+    expect(text).not.toContain("Push queue");
+    expect(text).not.toContain("awaiting Tally");
+    // The push counters do not apply in Mode B.
+    expect(text).not.toContain("Pushed today");
+    expect(text).not.toContain("needs retry");
+    expect(text).not.toContain("re-hash + push");
+    expect(container.querySelectorAll(".kpi.live")).toHaveLength(0);
+  });
+
+  it("says there are no approved orders when the list is empty", async () => {
+    const { container } = await mount(vi.fn(async () => ({ mode: "B", modes: MODES, applied: true })), []);
+    await waitFor(() => expect(container.textContent).toContain("No approved orders."));
+    expect(container.textContent).not.toContain("Nothing waiting to push.");
+  });
+});
+
+describe("Tally Push: while the mode loads", () => {
+  it("renders the push button disabled, so a quick click cannot push", async () => {
+    // The mode read never answers, as on a slow network after the list loads.
+    const { container, push } = await mount(vi.fn(() => new Promise(() => {})));
+    await waitFor(() => expect(container.textContent).toContain("PO-T-001"));
+    const btns = pushButtons(container);
+    expect(btns).toHaveLength(1);
+    expect(btns[0].hasAttribute("disabled")).toBe(true);
+    fireEvent.click(btns[0]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(push).not.toHaveBeenCalled();
+  });
 });
 
 describe("Tally Push: Mode A", () => {
@@ -76,9 +113,15 @@ describe("Tally Push: Mode A", () => {
   });
 
   it("behaves as Mode A when the mode cannot be read, as the server does", async () => {
-    const { container } = await mount(vi.fn(async () => { throw new Error("HTTP 500"); }));
+    const { container, push } = await mount(vi.fn(async () => { throw new Error("HTTP 500"); }));
     await waitFor(() => expect(container.textContent).toContain("PO-T-001"));
-    await waitFor(() => expect(pushButtons(container)).toHaveLength(1));
+    await waitFor(() => {
+      const btns = pushButtons(container);
+      expect(btns).toHaveLength(1);
+      expect(btns[0].hasAttribute("disabled")).toBe(false);
+    });
     expect(container.textContent).not.toContain("Push is off in Mode B");
+    fireEvent.click(pushButtons(container)[0]);
+    await waitFor(() => expect(push).toHaveBeenCalledTimes(1));
   });
 });

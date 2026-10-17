@@ -30,6 +30,7 @@ const makeSvc = () => ({
       // The handler passes the reference with no wildcards, so ilike is a
       // case-insensitive equality here.
       ilike(c, v) { this._f.push((r) => String(r[c] || "").toLowerCase() === String(v).toLowerCase()); return this; },
+      order() { return this; },
       upsert(p) { this._op = "upsert"; this._payload = p; return this; },
       update(p) { this._op = "update"; this._payload = p; return this; },
       _run() {

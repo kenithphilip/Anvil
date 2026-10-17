@@ -88,6 +88,40 @@ describe("ErpSalesOrderUpload", () => {
     await waitFor(() => expect(screen.getByText(/It names PO PO-TEST-0999, not this order's PO/)).toBeTruthy());
   });
 
+  it("says when the voucher number was not put on the order because the document names a different PO", async () => {
+    attachSalesOrder.mockResolvedValue({
+      ...ATTACHED,
+      match: { matched: true, reference: "PO-TEST-0999", overrode_reference: true },
+      voucher: { number: "SO-4417", previous: null, written: false, replaced: false, skipped: "reference_overridden", error: null },
+    });
+    const { container } = render(<ErpSalesOrderUpload orderId="ord-1" />);
+    pick(container);
+    await waitFor(() => expect(screen.getByText(/voucher number was not put on this order's SO PDF/)).toBeTruthy());
+  });
+
+  it("says which voucher number a re-issued sales order replaced", async () => {
+    attachSalesOrder.mockResolvedValue({
+      ...ATTACHED,
+      voucher: { number: "SO-4417", previous: "SO-4400", written: true, replaced: true, skipped: null, error: null },
+    });
+    const { container } = render(<ErpSalesOrderUpload orderId="ord-1" />);
+    pick(container);
+    await waitFor(() => expect(screen.getByText(/replaces SO-4400 on this order's SO PDF/)).toBeTruthy());
+    expect(screen.getByText("Sales order SO-4417 attached")).toBeTruthy();
+  });
+
+  it("says the sales order is attached when only the voucher number failed to save", async () => {
+    attachSalesOrder.mockResolvedValue({
+      ...ATTACHED,
+      voucher: { number: "SO-4417", previous: null, written: false, replaced: false, skipped: null, error: "connection reset" },
+    });
+    const { container } = render(<ErpSalesOrderUpload orderId="ord-1" />);
+    pick(container);
+    await waitFor(() => expect(screen.getByText("Sales order SO-4417 attached")).toBeTruthy());
+    expect(screen.getByText(/voucher number could not be saved on the order \(connection reset\)/)).toBeTruthy();
+    expect(screen.queryByText("Could not attach the sales order")).toBeNull();
+  });
+
   it("says when an attached sales order cannot be compared, in the endpoint's words", async () => {
     attachSalesOrder.mockResolvedValue({
       ...ATTACHED,

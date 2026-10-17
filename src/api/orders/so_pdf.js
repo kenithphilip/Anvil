@@ -23,6 +23,7 @@ import { lineDueDate, fmtDueDate } from "../_lib/order-delivery-date.js";
 import { readTermsCheckMode } from "../_lib/terms/mode.js";
 import { readCurrentCheck, readFlags } from "../_lib/terms/check.js";
 import { readDecisions, historyByFlag } from "../_lib/terms/decisions.js";
+import { normalizeWording } from "../_lib/terms/compare.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -75,8 +76,13 @@ export const PAYMENT_TERMS_NOT_STATED = "Not stated";
 //                            was silent
 //   reject_term              our quote's wording, and the PO's is refused, so
 //                            the PDF never falls back to it
-//   request_amendment        still open: settles nothing
-// With several quotes, the primary quote's flag is read first.
+//   request_amendment        still open, and we have asked the customer to
+//                            change the PO's term: our quote's wording, and
+//                            the PO's is not printed, so the acknowledgment
+//                            does not confirm the term we asked them to amend
+// poText is the PO's wording that is out, so a customer default worded the
+// same is not printed in its place. With several quotes, the primary quote's
+// flag is read first.
 export const decidedPaymentTerm = (flags, history) => {
   const list = (flags || []).filter((f) => f && f.clause === "payment_terms" && !f.superseded_at)
     .sort((a, b) => (a.quote?.primary ? 0 : 1) - (b.quote?.primary ? 0 : 1));
@@ -84,9 +90,16 @@ export const decidedPaymentTerm = (flags, history) => {
     const current = (history?.get(f.id) || [])[0];
     if (!current) continue;
     if (current.decision === "accept" || current.decision === "not_a_deviation") {
-      return { text: firstText(f.po?.text, f.quote?.text) || null, poRefused: false };
+      return { text: firstText(f.po?.text, f.quote?.text) || null, poRefused: false, amendmentOpen: false, poText: null };
     }
-    if (current.decision === "reject_term") return { text: text(f.quote?.text) || null, poRefused: true };
+    if (current.decision === "reject_term" || current.decision === "request_amendment") {
+      return {
+        text: text(f.quote?.text) || null,
+        poRefused: current.decision === "reject_term",
+        amendmentOpen: current.decision === "request_amendment",
+        poText: text(f.po?.text) || null,
+      };
+    }
   }
   return null;
 };
@@ -140,14 +153,22 @@ export const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, con
 
   // Payment terms, in this order: the term a decision settled on, the PO's
   // own terms as extracted, the customer's default, else "Not stated". The
-  // PO's terms are where the reconciler and the terms check read them.
-  const poTerms = decidedTerm?.poRefused ? "" : firstText(soData.customer?.payment_terms, soData.payment_terms);
+  // PO's terms are where the reconciler and the terms check read them. A PO
+  // term that was refused, or that we asked the customer to amend, is not
+  // printed, and neither is a customer default worded the same way (as the
+  // terms check compares wording, sides.js), since that is the same term.
+  const extractedPoTerms = firstText(soData.customer?.payment_terms, soData.payment_terms);
+  const poOut = !!(decidedTerm?.poRefused || decidedTerm?.amendmentOpen);
+  const poTerms = poOut ? "" : extractedPoTerms;
+  const outWording = poOut ? new Set([decidedTerm.poText, extractedPoTerms].map(normalizeWording).filter(Boolean)) : null;
+  const customerDefault = text(customer?.default_payment_terms);
+  const defaultTerms = outWording && outWording.has(normalizeWording(customerDefault)) ? "" : customerDefault;
 
   return {
     // Written by the ERP sales order attach (attach_sales_order.js).
     voucherNo: order.so_voucher_no || "",
     dated: fmtDate(order.approved_at || order.created_at),
-    modeOfPayment: firstText(decidedTerm?.text, poTerms, customer?.default_payment_terms) || PAYMENT_TERMS_NOT_STATED,
+    modeOfPayment: firstText(decidedTerm?.text, poTerms, defaultTerms) || PAYMENT_TERMS_NOT_STATED,
     buyerRef: order.po_number || "",
     regSerialNo: order.registration_serial_no || "",
     // The order's dispatch mode, else blank. It used to default to "By Road".

@@ -21,10 +21,39 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { matchSalesOrderToOrders, comparability, poKey } from "../_lib/sales-order-match.js";
 
-// The voucher number the read gave, trimmed, or "" when it gave none.
-const voucherOf = (extracted) => {
-  const v = extracted?.voucher_no;
-  return typeof v === "string" || typeof v === "number" ? String(v).trim() : "";
+// Longer than any ERP voucher number. A longer value is a misread, not a
+// number, and a cut-down one would print a number no document gave, so it is
+// not written at all.
+export const MAX_VOUCHER_LENGTH = 64;
+
+// Extraction outcomes that are not a read of the document, as register.js
+// treats them: a dedupe hit is a copy of an older run.
+const NOT_A_READ = new Set(["dedupe_hit"]);
+
+// A voucher number, trimmed, or "" when there is none or it is too long.
+const voucherOf = (v) => {
+  const s = typeof v === "string" || typeof v === "number" ? String(v).trim() : "";
+  return s.length <= MAX_VOUCHER_LENGTH ? s : "";
+};
+
+// The voucher number this document read as, and what the read classified it
+// as. The register shows the number from the document's own sales order
+// read (register.js loadErp: newest first, a dedupe hit skipped, a run with
+// no number skipped), so this takes it from the same rows and the PDF and the
+// register cannot disagree. The request body is used only when the document
+// has no read at all.
+const readVoucher = async (svc, tenantId, documentId, extracted) => {
+  const runs = await svc.from("extraction_runs")
+    .select("voucher_no:normalized_extract->>voucher_no, classification:normalized_extract->>classification, finished_at, status_reason")
+    .eq("tenant_id", tenantId).eq("extraction_kind", "sales_order").eq("source_id", documentId)
+    .order("finished_at", { ascending: false, nullsFirst: false });
+  if (runs.error) throw new Error("extraction_runs: " + runs.error.message);
+  const reads = (runs.data || []).filter((r) => !NOT_A_READ.has(r.status_reason));
+  if (!reads.length) {
+    return { voucher_no: extracted?.voucher_no ?? null, classification: extracted?.classification || null, source: "request" };
+  }
+  const hit = reads.find((r) => r.voucher_no);
+  return { voucher_no: hit?.voucher_no ?? null, classification: hit?.classification || null, source: "read" };
 };
 
 export default async function handler(req, res) {
@@ -65,7 +94,7 @@ export default async function handler(req, res) {
       // The override path. Still verified against the tenant: an order id from
       // a request body is not proof the caller may attach to it.
       const o = await svc.from("orders")
-        .select("id, po_number, status, created_at")
+        .select("id, po_number, status, created_at, so_voucher_no")
         .eq("tenant_id", ctx.tenantId).eq("id", body.order_id).maybeSingle();
       if (o.error) throw new Error("orders read: " + o.error.message);
       if (!o.data) return json(res, 404, { error: { message: "Order not found" } });
@@ -87,7 +116,7 @@ export default async function handler(req, res) {
       // memory; the database should not have to send them.
       const candQ = ref
         ? await svc.from("orders")
-          .select("id, po_number, status, created_at")
+          .select("id, po_number, status, created_at, so_voucher_no")
           .eq("tenant_id", ctx.tenantId).ilike("po_number", extracted.buyer_ref_order_no.trim())
         : { data: [] };
       if (candQ.error) throw new Error("orders read: " + candQ.error.message);
@@ -107,6 +136,9 @@ export default async function handler(req, res) {
       order = match.order;
       via = "buyer_reference";
     }
+
+    // Read before anything is stored, so a failed read stores nothing.
+    const read = await readVoucher(svc, ctx.tenantId, documentId, extracted);
 
     const link = await svc.from("order_documents")
       .upsert({ order_id: order.id, document_id: documentId, role: "sales_order" },
@@ -133,11 +165,29 @@ export default async function handler(req, res) {
     // so the PDF's Voucher No. was always blank. Written only when the read
     // found one: a number that did not read leaves the order's number alone,
     // and a document read as something other than a sales order has none.
-    const voucherNo = compare.reason === "not_a_sales_order" ? "" : voucherOf(extracted);
-    if (voucherNo) {
+    //
+    // Not written when the document names a different PO: the number may be
+    // another order's, and the PDF goes to the customer. A re-issued sales
+    // order replaces the number, and the response and the audit say which
+    // number it replaced.
+    const voucherNo = read.classification && read.classification !== "sales_order" ? "" : voucherOf(read.voucher_no);
+    const previous = voucherOf(order.so_voucher_no) || null;
+    const voucher = { number: voucherNo || null, previous, written: false, replaced: false, skipped: null, error: null };
+    if (voucherNo && match.overrode_reference) {
+      voucher.skipped = "reference_overridden";
+    } else if (voucherNo && voucherNo !== previous) {
       const up = await svc.from("orders").update({ so_voucher_no: voucherNo })
         .eq("tenant_id", ctx.tenantId).eq("id", order.id);
-      if (up.error) throw new Error("orders so_voucher_no: " + up.error.message);
+      if (up.error) {
+        // The document is linked by now, so the attach did happen. Say that
+        // only the number failed, rather than "could not attach"; attaching
+        // again retries it.
+        voucher.error = up.error.message || "update failed";
+        console.error("[orders/attach_sales_order] so_voucher_no: " + voucher.error);
+      } else {
+        voucher.written = true;
+        voucher.replaced = !!previous;
+      }
     }
 
     await recordAudit(ctx, {
@@ -149,6 +199,11 @@ export default async function handler(req, res) {
         overrode_reference: !!match.overrode_reference,
         comparable: compare.comparable,
         so_voucher_no: voucherNo || null,
+        so_voucher_source: voucherNo ? read.source : null,
+        previous_so_voucher_no: previous,
+        so_voucher_written: voucher.written,
+        so_voucher_skipped: voucher.skipped,
+        so_voucher_error: voucher.error,
       },
     });
 
@@ -160,6 +215,7 @@ export default async function handler(req, res) {
       comparable: compare.comparable,
       comparability: compare,
       document: { id: documentId, filename: docQ.data.filename },
+      voucher,
       // The comparison itself is PR 4. Saying so beats returning a shape that
       // looks like it should contain a verdict and never does.
       compared: false,

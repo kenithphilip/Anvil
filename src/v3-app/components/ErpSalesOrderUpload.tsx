@@ -26,6 +26,11 @@ type Outcome = {
   // Why it cannot be compared, as the endpoint words it (comparability() in
   // _lib/sales-order-match.js), so the screen keeps no second copy.
   comparabilityDetail: string | null;
+  // What the attach did with the voucher number on the order, which the SO
+  // PDF prints: the number it replaced, or why it wrote none.
+  voucherReplaced: string | null;
+  voucherSkipped: boolean;
+  voucherError: string | null;
 };
 
 type Held = { documentId: string; extracted: any; reason: string };
@@ -44,12 +49,16 @@ export const ErpSalesOrderUpload: React.FC<{ orderId: string; onAttached?: () =>
     if (!res?.attached) {
       throw new Error("The sales order was not attached to this order.");
     }
+    const v = res?.voucher || null;
     setOutcome({
-      voucherNo: extracted?.voucher_no ?? null,
+      voucherNo: v?.number ?? extracted?.voucher_no ?? null,
       reference: res?.match?.reference ?? null,
       overrodeReference: !!res?.match?.overrode_reference,
       comparable: res?.comparable !== false,
       comparabilityDetail: res?.comparability?.detail ?? null,
+      voucherReplaced: v?.replaced ? v.previous ?? null : null,
+      voucherSkipped: v?.skipped === "reference_overridden",
+      voucherError: v?.error ?? null,
     });
     onAttached?.();
   };
@@ -157,7 +166,7 @@ export const ErpSalesOrderUpload: React.FC<{ orderId: string; onAttached?: () =>
 
       {outcome && (
         <Banner
-          kind={outcome.comparable && !outcome.overrodeReference ? "ok" : "warn"}
+          kind={outcome.comparable && !outcome.overrodeReference && !outcome.voucherError ? "ok" : "warn"}
           title={`Sales order ${outcome.voucherNo || "(unnumbered)"} attached`}
         >
           {!outcome.comparable && (
@@ -168,6 +177,21 @@ export const ErpSalesOrderUpload: React.FC<{ orderId: string; onAttached?: () =>
           {outcome.overrodeReference && (
             <span className="mono-sm">
               {" "}It names PO {outcome.reference}, not this order's PO. It was attached here because you uploaded it on this order.
+            </span>
+          )}
+          {outcome.voucherSkipped && (
+            <span className="mono-sm">
+              {" "}Its voucher number was not put on this order's SO PDF, because it may be another order's.
+            </span>
+          )}
+          {outcome.voucherReplaced && (
+            <span className="mono-sm">
+              {" "}Its voucher number replaces {outcome.voucherReplaced} on this order's SO PDF.
+            </span>
+          )}
+          {outcome.voucherError && (
+            <span className="mono-sm">
+              {" "}The voucher number could not be saved on the order ({outcome.voucherError}), so the SO PDF does not show it. Upload the sales order again to retry.
             </span>
           )}
         </Banner>

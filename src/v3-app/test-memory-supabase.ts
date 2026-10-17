@@ -12,7 +12,8 @@
 //   vi.mock("../api/_lib/supabase.js", () => ({ serviceClient: () => H.db.svc() }));
 //   beforeEach(() => { H.db = createMemoryDb({ opportunities: [...] }); });
 //
-// failRead[table] makes every read of that table return that error.
+// failRead[table] makes every read of that table return that error, and
+// failUpdate[table] every update of it (the rows are left as they were).
 //
 // Opt-in, for handlers whose select strings matter: createMemoryDb(tables,
 // users, { project: true }) applies the select list to reads the way
@@ -28,6 +29,7 @@ export type MemoryDb = {
   tables: Record<string, Row[]>;
   users: Record<string, Row>;
   failRead: Record<string, { message: string; code?: string }>;
+  failUpdate: Record<string, { message: string; code?: string }>;
   svc: () => any;
 };
 
@@ -74,7 +76,7 @@ const projectRow = (row: Row, cols: string): Row => {
 };
 
 export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record<string, Row> = {}, opts: { project?: boolean } = {}): MemoryDb => {
-  const db: MemoryDb = { tables, users, failRead: {}, svc: () => null };
+  const db: MemoryDb = { tables, users, failRead: {}, failUpdate: {}, svc: () => null };
   let seq = 0;
 
   const from = (table: string) => {
@@ -84,6 +86,7 @@ export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record
     const run = () => {
       const ds = db.tables[table];
       if (st.mode === "select" && db.failRead[table]) return { data: null, error: db.failRead[table] };
+      if (st.mode === "update" && db.failUpdate[table]) return { data: null, error: db.failUpdate[table] };
       let out: Row[];
       if (st.mode === "update") {
         out = ds.filter(matches);

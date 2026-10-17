@@ -22,7 +22,8 @@ vi.mock("../api/_lib/pdf-renderer.js", () => ({
   renderSalesOrder: vi.fn(async (data) => { H.rendered.push(data); return Buffer.from("%PDF terms"); }),
 }));
 
-const { default: soPdf, buildSalesOrderData, PAYMENT_TERMS_NOT_STATED } = await import("../api/orders/so_pdf.js");
+const { default: soPdf, buildSalesOrderData, decidedPaymentTerm, PAYMENT_TERMS_NOT_STATED } = await import("../api/orders/so_pdf.js");
+const { historyByFlag } = await import("../api/_lib/terms/decisions.js");
 
 const build = ({ order = {}, customer = null, decidedTerm = null } = {}) => buildSalesOrderData({
   order: { id: "o-1", po_number: "PO-PT-1", created_at: "2026-10-01", result: { salesOrder: { lineItems: [] } }, ...order },
@@ -71,6 +72,37 @@ describe("buildSalesOrderData: payment terms and dispatch mode", () => {
       .toBe("30 days net");
     expect(build({ order: withPoTerms("90 days"), decidedTerm: { text: null, poRefused: true } }).modeOfPayment)
       .toBe(PAYMENT_TERMS_NOT_STATED);
+  });
+
+  it("a customer default worded as the refused PO term is that term again, so it is not printed", () => {
+    const decidedTerm = { text: null, poRefused: true, poText: "90 days from receipt" };
+    expect(build({ order: withPoTerms("90 days from receipt"), customer: { default_payment_terms: " 90 DAYS  from Receipt " }, decidedTerm }).modeOfPayment)
+      .toBe(PAYMENT_TERMS_NOT_STATED);
+    // The same when only the flag holds the PO's wording.
+    expect(build({ customer: { default_payment_terms: "90 days from receipt" }, decidedTerm }).modeOfPayment)
+      .toBe(PAYMENT_TERMS_NOT_STATED);
+  });
+});
+
+describe("decidedPaymentTerm", () => {
+  const f = (id, primary, quoteText) => ({
+    id, clause: "payment_terms", superseded_at: null,
+    po: { text: "90 days from receipt" },
+    quote: { text: quoteText, primary, quote_id: "q-" + id },
+  });
+  const d = (flag_id, decision) => ({ id: "d-" + flag_id, flag_id, decision, decided_at: "2026-10-03T10:00:00Z" });
+
+  it("with several quotes, the primary quote's decision is read first", () => {
+    // The non-primary flag comes first and was rejected; the primary one was accepted.
+    const flags = [f("f-other", false, "60 days from invoice"), f("f-primary", true, "30 days from invoice")];
+    const history = historyByFlag([d("f-other", "reject_term"), d("f-primary", "accept")]);
+    expect(decidedPaymentTerm(flags, history)).toMatchObject({ text: "90 days from receipt", poRefused: false, amendmentOpen: false });
+  });
+
+  it("a requested amendment gives our quote's term and keeps the PO's term out", () => {
+    const flags = [f("f-primary", true, "30 days from invoice")];
+    expect(decidedPaymentTerm(flags, historyByFlag([d("f-primary", "request_amendment")])))
+      .toMatchObject({ text: "30 days from invoice", poRefused: false, amendmentOpen: true, poText: "90 days from receipt" });
   });
 });
 
@@ -133,14 +165,25 @@ describe("GET /api/orders/so_pdf: the decided payment term", () => {
     expect((await render()).modeOfPayment).toBe("30 days from invoice");
   });
 
-  it("a requested amendment settles nothing, so the PO's terms print", async () => {
+  it("while an amendment is requested, our quote's term prints, not the PO's term we asked them to amend", async () => {
     seed({ decisions: [decision("request_amendment", "2026-10-03T10:00:00Z")] });
-    expect((await render()).modeOfPayment).toBe("90 days from receipt");
+    expect((await render()).modeOfPayment).toBe("30 days from invoice");
+  });
+
+  it("a requested amendment with no quote term prints the customer default, never the PO's term", async () => {
+    seed({ flags: [flag({ outcome: "po_only", quote: null })], decisions: [decision("request_amendment", "2026-10-03T10:00:00Z")] });
+    expect((await render()).modeOfPayment).toBe("15 days");
   });
 
   it("a rejected term with no quote term never prints the PO's term", async () => {
     seed({ flags: [flag({ outcome: "po_only", quote: null })], decisions: [decision("reject_term", "2026-10-03T10:00:00Z")] });
     expect((await render()).modeOfPayment).toBe("15 days");
+  });
+
+  it("a rejected term with no quote term does not print a customer default worded as the PO's term", async () => {
+    seed({ flags: [flag({ outcome: "po_only", quote: null })], decisions: [decision("reject_term", "2026-10-03T10:00:00Z")] });
+    H.db.tables.customers[0].default_payment_terms = "90 Days From Receipt";
+    expect((await render()).modeOfPayment).toBe(PAYMENT_TERMS_NOT_STATED);
   });
 
   it("a decision on a superseded check is not read", async () => {

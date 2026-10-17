@@ -54,8 +54,27 @@ const WiredTallyPush = () => {
   const canPush  = !!(RBAC && RBAC.canDo && RBAC.canDo("tally.push"));
   const bridge   = useTallyBridgeStatus();
 
+  // The tenant's sales-order processing mode (Admin > Sales-order
+  // processing). In Mode B the server refuses every push (tally/push.js),
+  // so the screen says why and offers no push button. Until the mode is
+  // read, or if it cannot be read, the screen behaves as Mode A, which is
+  // also how the server reads an unreadable mode.
+  const [soMode, setSoMode] = useState<{ mode: "A" | "B"; label?: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    Promise.resolve((AnvilBackend as any)?.docai?.soProcessingMode?.())
+      .then((r: any) => {
+        if (!live) return;
+        const m = r?.mode === "B" ? "B" : "A";
+        setSoMode({ mode: m, label: r?.modes?.[m]?.label });
+      })
+      .catch(() => { if (live) setSoMode(null); });
+    return () => { live = false; };
+  }, []);
+  const modeB = soMode?.mode === "B";
+
   const handlePush = async (order) => {
-    if (!canPush) return;
+    if (!canPush || modeB) return;
     setBusyId(order.id);
     setFlash(null);
     try {
@@ -82,7 +101,17 @@ const WiredTallyPush = () => {
       />
 
       <div className="ws-content">
-        {!bridge.loading && !bridge.configured && (
+        {modeB && (
+          <Banner kind="info" icon={Icon.lock} title={"Push is off in Mode B" + (soMode?.label ? ": " + soMode.label : "")}>
+            <span className="mono-sm">
+              Your team enters these sales orders in Tally by hand, and Anvil checks them against the PO.
+              Anvil does not push vouchers in Mode B, so this screen offers no push. An admin can switch to
+              Mode A under Admin &gt; Sales-order processing.
+            </span>
+          </Banner>
+        )}
+
+        {!modeB && !bridge.loading && !bridge.configured && (
           <Banner kind="warn" icon={Icon.alert} title="Tally bridge not configured">
             <span className="mono-sm">
               Set <code>TALLY_BRIDGE_URL</code> and <code>TALLY_BRIDGE_TOKEN</code> in Vercel
@@ -91,7 +120,7 @@ const WiredTallyPush = () => {
           </Banner>
         )}
 
-        {!canPush && (
+        {!modeB && !canPush && (
           <Banner kind="warn" icon={Icon.lock} title="Push permission required">
             <span className="mono-sm">Your role cannot push to Tally. Contact an admin or finance manager to enable <b>tally.push</b>.</span>
           </Banner>
@@ -130,7 +159,7 @@ const WiredTallyPush = () => {
                 <th scope="col">Payload hash</th>
                 <th scope="col">Status</th>
                 <th scope="col" className="r">Age</th>
-                <th scope="col" style={{ width: 120 }}></th>
+                {!modeB && <th scope="col" style={{ width: 120 }}></th>}
               </tr></thead>
               <tbody>
                 {queueRows.map((o) => {
@@ -145,14 +174,16 @@ const WiredTallyPush = () => {
                       <td className="mono-sm">{shortHash(hash)}</td>
                       <td><Chip k={st.k}>{st.label}</Chip></td>
                       <td className="r mono">{ageLabel(o.updated_at || o.created_at)}</td>
-                      <td>
-                        <Btn sm kind="primary"
-                             disabled={!canPush || busyId === o.id || !bridge.configured}
-                             title={!bridge.configured ? "Tally bridge not configured" : undefined}
-                             onClick={() => handlePush(o)}>
-                          {busyId === o.id ? "pushing…" : <>push {Icon.send}</>}
-                        </Btn>
-                      </td>
+                      {!modeB && (
+                        <td>
+                          <Btn sm kind="primary"
+                               disabled={!canPush || busyId === o.id || !bridge.configured}
+                               title={!bridge.configured ? "Tally bridge not configured" : undefined}
+                               onClick={() => handlePush(o)}>
+                            {busyId === o.id ? "pushing…" : <>push {Icon.send}</>}
+                          </Btn>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}

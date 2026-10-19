@@ -16,6 +16,10 @@
 // Extraction anomalies (extraction_runs.anomalies[].code) that hard-block.
 export const BLOCKING_ANOMALY_CODES = new Set(["line_count_shortfall"]);
 
+// The blocker the background writeback raises when it lands on a reviewed
+// order (plan C-2, cron/extraction_jobs.js). It holds the new lines.
+export const LINES_CHANGED_CODE = "lines_changed_after_review";
+
 // A rule_findings entry that must block, and hasn't been resolved. Deliberately
 // narrow: only findings explicitly stamped blocks:true (the projected extraction
 // blockers) or a known blocking code — NOT every ERROR/high advisory finding —

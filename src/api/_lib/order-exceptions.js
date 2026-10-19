@@ -49,7 +49,8 @@
 // SO workspace imports this file too, so they cannot disagree.
 
 import { SEVERITY_LEVELS } from "./terms/taxonomy.js";
-import { isUnresolvedBlocker } from "./blocking-findings.js";
+import { isUnresolvedBlocker, LINES_CHANGED_CODE } from "./blocking-findings.js";
+import { isJobInFlight } from "./extraction-job-status.js";
 import { deliveryDateConflicts, orderDeliveryDate, poRequiredBy, committedDate, suggestedCommittedDate } from "./order-delivery-date.js";
 
 // The response shape. Bump it when a field changes meaning.
@@ -108,6 +109,8 @@ export const RESOLUTION_OPTIONS = Object.freeze({
   confirm: "Confirm it as it stands",
   change_customer: "Link the order to another customer",
   update_master: "Update the customer master from the PO",
+  use_new_lines: "Use the lines the full extraction read",
+  cancel_extraction: "Cancel the background extraction",
 });
 
 // How each option is applied today. kind "endpoint" names the existing call
@@ -170,6 +173,12 @@ export const EXCEPTION_TYPES = Object.freeze({
   mod_bom_pending: { source: "finding", options: [opt("confirm", RESOLVE_FINDING), opt("run_check", RUN_EXTRACTION)] },
   line_count_shortfall: { source: "finding", options: [opt("run_check", RUN_EXTRACTION), opt("confirm", RESOLVE_FINDING)] },
   blocking_finding: { source: "finding", options: [opt("confirm", RESOLVE_FINDING)] },
+  // Plan C-2: the background writeback held new lines on a reviewed order.
+  lines_changed_after_review: { source: "finding", options: [
+    opt("use_new_lines", endpoint("PATCH", ORDER, "result.salesOrder.lineItems from the finding's pending_lines",
+      "Needs decision: Load the new lines, then Save line edits; an approver then resolves the finding")),
+    opt("confirm", RESOLVE_FINDING),
+  ] },
   "finding:*": { source: "finding", options: [opt("confirm", RESOLVE_FINDING), opt("set_value", LINE_EDIT_ANY)] },
   // the anomaly rules
   "anomaly:*": { source: "anomaly", options: [opt("confirm", NO_DECISION_RECORD), opt("set_value", LINE_EDIT_ANY), opt("run_check", RUN_VALIDATION)] },
@@ -179,6 +188,8 @@ export const EXCEPTION_TYPES = Object.freeze({
   extraction_failed: { source: "extraction", options: [opt("run_check", RUN_EXTRACTION), opt("confirm", NO_DECISION_RECORD)] },
   extraction_low_confidence: { source: "extraction", options: [opt("run_check", RUN_EXTRACTION), opt("confirm", NO_DECISION_RECORD)] },
   extraction_fallback_parse: { source: "extraction", options: [opt("run_check", RUN_EXTRACTION), opt("confirm", NO_DECISION_RECORD)] },
+  extraction_in_flight: { source: "extraction", options: [opt("cancel_extraction", endpoint("PATCH", "/api/orders/extraction_jobs/{job_id}", "action: cancel",
+    "No screen control yet: the API only, and refused once the job is merging"))] },
   "extraction_check:*": { source: "extraction", options: [opt("set_value", lineEdit("{field}")), opt("run_check", RUN_EXTRACTION), opt("confirm", NO_DECISION_RECORD)] },
   // the terms check
   terms_flag: {
@@ -758,6 +769,22 @@ const findingRows = ({ order }) => {
       }));
       continue;
     }
+    if (code === LINES_CHANGED_CODE) {
+      const held = arr(f.pending_lines).length;
+      out.push(({
+        type: LINES_CHANGED_CODE, subject: "finding:" + keyPart(code), source: "finding", severity: "critical", blocks: resolved ? null : "approval",
+        title: "Lines changed after review: the full extraction read " + plural(held, "line"),
+        detail: [str(f.detail), str(f.suggested_fix)].filter(Boolean).join(" "),
+        payload: {
+          subject: findingSubject, code, field: "lines", pending_line_count: held, current_line_count: lines.length,
+          from_status: f.from_status || null, extraction_job_id: f.extraction_job_id || null,
+          evidence_refs: [{ kind: "finding", code }, ...(f.extraction_job_id ? [{ kind: "extraction_job", job_id: f.extraction_job_id }] : [])],
+        },
+        action: { tab: "recon", control: "use_pending_lines", label: "Load the new lines into the line grid" },
+        ...decided,
+      }));
+      continue;
+    }
     out.push(({
       type: blocker ? "blocking_finding" : "finding:" + code,
       subject: "finding:" + keyPart(code) + (li != null ? ":" + lineSubject(lines, li) : ""),
@@ -818,7 +845,7 @@ const anomalyRows = ({ order }) => {
 
 // ── the extraction run ──────────────────────────────────────────────────────
 
-const extractionRows = ({ order, extractionRun }) => {
+const extractionRows = ({ order, extractionRun, extractionJob }) => {
   const out = [];
   const lines = linesOf(order);
   const pf = order?.preflight_payload || {};
@@ -826,6 +853,18 @@ const extractionRows = ({ order, extractionRun }) => {
   const runRef = run?.id || pf.extraction_run_id ? [{ kind: "extraction_run", run_id: run?.id || pf.extraction_run_id }] : [];
   const hasDoc = !!(pf.source_document_id || arr(order?.documents).length);
   const qualityAction = { tab: "recon", control: "extraction_quality", label: "Extraction quality card on the Reconcile tab" };
+
+  // Plan C-2: a background job is still reading the full document, so the
+  // lines on the order can be a page-1 preview.
+  if (isJobInFlight(extractionJob)) {
+    out.push(({
+      type: "extraction_in_flight", subject: "order", source: "extraction", severity: "warn", blocks: "send",
+      title: "Extraction still running (" + words(extractionJob.status) + ")",
+      detail: "A background extraction is reading the full document. The lines on the order can be a preview. Wait for it to finish before you send the order for approval.",
+      payload: { subject: ORDER_SUBJECT, job_id: extractionJob.id || null, job_status: extractionJob.status, evidence_refs: extractionJob.id ? [{ kind: "extraction_job", job_id: extractionJob.id }] : [] },
+      action: { tab: "recon", label: "Wait for the extraction to finish" },
+    }));
+  }
 
   if (!lines.length && (hasDoc || run || pf.extraction_run_id)) {
     out.push(({
@@ -1126,6 +1165,7 @@ const termsState = (terms) => {
 //   customer       the customers row (customer_name, gstin, state_code) or null
 //   vendorCodes    the vendor codes this customer uses for us
 //   extractionRun  the extraction_runs row the order was read by, or null
+//   extractionJob  the order's newest extraction_jobs row in flight, or null
 //   terms          the terms view this caller may see (GET /api/orders/terms),
 //                  or null when the check is not installed
 //   termsPolicy    the tenant's effective terms policy, or null
@@ -1136,7 +1176,7 @@ const termsState = (terms) => {
 //   { version, order_id, status, rows, info, decided, counts, clean,
 //     customer_match, terms_state, agent_policy, delivery }
 export const buildOrderExceptions = ({
-  order = null, customer = null, vendorCodes = [], extractionRun = null, terms = null, termsPolicy = null, agentPolicy = null,
+  order = null, customer = null, vendorCodes = [], extractionRun = null, extractionJob = null, terms = null, termsPolicy = null, agentPolicy = null,
   now = new Date(),
 } = {}) => {
   const policy = agentPolicy ? resolveAgentPolicy(agentPolicy) : DEFAULT_AGENT_POLICY;
@@ -1152,7 +1192,7 @@ export const buildOrderExceptions = ({
     ...reconciliationRows({ order, termsByClause, policy }),
     ...cust.rows,
     ...anomalyRows({ order }),
-    ...extractionRows({ order, extractionRun }),
+    ...extractionRows({ order, extractionRun, extractionJob }),
     ...deliveryRows({ order, now }),
   ])).map((r) => finish(r, policy));
   const sorted = orderRows(all);

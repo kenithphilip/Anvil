@@ -16,8 +16,9 @@ const { __test } = await import("../api/cron/extraction_jobs.js");
 const { tenantSettings } = await import("../api/_lib/stripe-client.js");
 const { advanceJob } = __test;
 
-// Supabase double: records every update, and answers the cancel check with
-// the job's own status.
+// Supabase double: records every update, answers the cancel check with the
+// job's own status, and reads the order as a DRAFT (the writeback writes
+// lines only to a DRAFT, plan C-2).
 const makeSvc = (job) => {
   const updates = [];
   return {
@@ -34,10 +35,12 @@ const makeSvc = (job) => {
         maybeSingle: async () => {
           if (ctx.values) return { data: { ...job, ...ctx.values }, error: null };
           if (table === "extraction_jobs") return { data: { status: job.status }, error: null };
+          if (table === "orders") return { data: { status: "DRAFT" }, error: null };
           return { data: null, error: null };
         },
         single: async () => ({ data: { ...job, ...(ctx.values || {}) }, error: null }),
-        then: (r) => r({ data: [], error: null }),
+        // An update with select returns the row it wrote.
+        then: (r) => r({ data: ctx.values ? [{ id: "row-1" }] : [], error: null }),
       };
       return api;
     },

@@ -6,6 +6,7 @@
 //   DELETE ?id=  remove threshold
 
 import { orderMargin } from "../_lib/order-margin.js";
+import { orderStage } from "../_lib/order-stage.js";
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission, hasAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
@@ -188,6 +189,9 @@ export default async function handler(req, res) {
         }
       }
       const seesCost = hasAction(ctx, "cost.view");
+      // Every queue order is PENDING_REVIEW, and that stage needs neither the
+      // mode nor the ERP SO, so neither is read. The holder is the open
+      // threshold's role when there is one.
       const queue = orders.map((ord) => ({
         order_id: ord.id,
         status: ord.status,
@@ -196,6 +200,7 @@ export default async function handler(req, res) {
         updated_at: ord.updated_at || null,
         ...orderQueueFields(ord, seesCost),
         thresholds: byOrder.get(ord.id) || [],
+        stage: orderStage(ord, { approver_role: byOrder.get(ord.id)?.[0]?.approver_role || null }),
       }));
       return json(res, 200, { orders: queue, limit: QUEUE_LIMIT });
     }

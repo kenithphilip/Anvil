@@ -20,13 +20,16 @@ import { serviceClient } from "../_lib/supabase.js";
 import { readTermsSettings, readTermsView } from "../_lib/terms/check.js";
 import { buildOrderExceptions } from "../_lib/order-exceptions.js";
 import { wantsShadow } from "./terms.js";
+import { orderStage, withStageColumns } from "../_lib/order-stage.js";
+import { readStageEvidence, stageEvidenceFor } from "../_lib/order-stage-evidence.js";
+import { IN_FLIGHT_JOB_STATUSES } from "../_lib/extraction-job-status.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const ORDER_COLUMNS = [
+const ORDER_COLUMNS = withStageColumns([
   "id", "status", "customer_id", "po_number", "po_date", "vendor_code", "result",
   "rule_findings", "anomaly_flags", "preflight_payload", "committed_delivery_date",
-].join(", ");
+]);
 
 const RUN_COLUMNS = "id, status, confidence_overall, adapter_used, anomalies, validator_issues";
 
@@ -50,6 +53,16 @@ const readCustomer = async (svc, tenantId, customerId) => {
   const v = await svc.from("customer_vendor_codes").select("vendor_code")
     .eq("tenant_id", tenantId).eq("customer_id", customerId);
   return { customer: c.data || null, vendorCodes: v.error ? [] : (v.data || []).map((r) => r.vendor_code) };
+};
+
+// The background extraction still reading this order's PO, or null.
+// Advisory, like the run: an unreadable job leaves the stage to the order.
+// shortcut: only this one-order endpoint reads the job, so the lists never
+// show "Received"; upgrade when C-14's worklist needs it.
+const readInFlightJob = async (svc, tenantId, orderId) => {
+  const r = await svc.from("extraction_jobs").select("id, created_at")
+    .eq("tenant_id", tenantId).eq("order_id", orderId).in("status", IN_FLIGHT_JOB_STATUSES).maybeSingle();
+  return r.error ? null : r.data || null;
 };
 
 // The terms view this caller may see, and the tenant's effective terms
@@ -92,16 +105,20 @@ export default async function handler(req, res) {
     if (!o.data) return json(res, 404, { error: { message: "Order not found" } });
     const order = o.data;
 
-    const [{ customer, vendorCodes }, extractionRun, terms] = await Promise.all([
+    const [{ customer, vendorCodes }, extractionRun, terms, ev, job] = await Promise.all([
       readCustomer(svc, ctx.tenantId, order.customer_id),
       readRun(svc, ctx.tenantId, order.preflight_payload?.extraction_run_id),
       readTerms(svc, ctx, orderId, includeShadow),
+      readStageEvidence(svc, ctx.tenantId, [orderId]),
+      readInFlightJob(svc, ctx.tenantId, orderId),
     ]);
 
     // Exactly what the workspace renders, versioned (EXCEPTIONS_VERSION), so
     // an agent reading this and a person reading the screen see one queue.
+    // The stage rides beside it, so the next step reads the same answer.
     const out = buildOrderExceptions({ order, customer, vendorCodes, extractionRun, terms: terms.view, termsPolicy: terms.policy });
-    return json(res, 200, out);
+    const stage = orderStage(order, { ...stageEvidenceFor(ev, orderId), extraction_job: job });
+    return json(res, 200, { ...out, stage });
   } catch (err) {
     sendError(res, err);
   }

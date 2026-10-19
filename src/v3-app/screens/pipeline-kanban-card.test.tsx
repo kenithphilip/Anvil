@@ -30,6 +30,9 @@ vi.mock("../../api/_lib/supabase.js", () => {
       order: () => q,
       limit: () => q,
       eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
+      // The stage evidence: the tenant's mode and the linked ERP sales orders.
+      in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return q; },
+      maybeSingle: () => Promise.resolve({ data: (db.tables[table] || []).filter((r) => filters.every((f) => f(r)))[0] || null, error: null }),
       then: (resolve: (v: unknown) => void) =>
         resolve({ data: (db.tables[table] || []).filter((r) => filters.every((f) => f(r))).map(shape), error: null }),
     };

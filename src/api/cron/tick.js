@@ -1,22 +1,34 @@
 // GET /api/cron/tick
 //
-// Runs every 5 minutes (Hobby-tier-friendly consolidation). Fans
-// out to every per-handler cron path that needs sub-hourly cadence:
+// Meant to be called every 5 minutes by an EXTERNAL scheduler: vercel.json
+// schedules only /api/cron/daily, because the Hobby tier rejects a sub-daily
+// cron. docs/CRONS.md lists the schedulers and the one-time setup.
 //
-//   ALWAYS (every 5 min tick):
-//     - Push notification queue drain
-//     - Inbound email parse
-//     - All ERP retry queue drains (in parallel)
+// Two gates decide what a call runs, and a handler must pass both:
 //
-//   WHEN current minute % 30 === 0 (i.e. on the hour and half-hour):
-//     - All ERP syncs (in parallel)
+//   1. The allow-list, CRON_TICK_HANDLERS (comma-separated handler names).
+//      Unset or blank: ONLY "extraction/jobs". "all": every handler below.
+//      "none": nothing. A list: exactly those names; a name that is not
+//      registered is reported in the response and ignored.
 //
-//   WHEN current minute === 0 (i.e. on the hour):
-//     - Autonomous agent run
+//      The default is narrow on purpose. Most of these drains never ran in
+//      production, so their queues hold months of backlog, and several of
+//      them act on it: they send queued customer email, place calls, bill
+//      metered usage and create draft orders. docs/CRONS.md has the per-handler
+//      inventory and the cleanup each one needs before it is widened.
 //
-// Auth: Bearer CRON_SECRET (Vercel injects this for scheduled crons).
+//   2. The cadence, from the current UTC minute:
+//        always       every call
+//        half_hourly  minute % 30 === 0 (the ERP and PLM syncs)
+//        hourly       minute === 0 (agents/run, drift-meter)
+//        hourly_at_5  minute === 5 (the eval harness, off the hour spike)
+//
+// The response names every registered handler exactly once: in `ran`, in
+// `skipped_by_gate`, or in `not_due` (allowed, but not due this minute).
+//
+// Auth: Bearer CRON_SECRET; with the secret unset every call is refused.
 // One sub-handler failure does not block siblings (Promise.allSettled
-// + per-handler try/catch).
+// + per-handler try/catch in cron-mux).
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { runCronGroup, shouldRunOnMinute, recordCronHeartbeat } from "../_lib/cron-mux.js";
@@ -131,112 +143,175 @@ const SYNCS = [
   { name: "plm/sync",       fn: plmSync,       opts: { path: "/api/plm/sync", method: "POST" } },
 ];
 
-export default async function handler(req, res) {
+// Cadences. isTickHandlerDue() is the only place that reads them.
+export const ALWAYS = "always";
+export const HALF_HOURLY = "half_hourly";
+export const HOURLY = "hourly";
+export const HOURLY_AT_5 = "hourly_at_5";
+
+// Groups run one after another in this order; the handlers inside a group run
+// in parallel. Same order as before the allow-list existed.
+const CADENCE_ORDER = [ALWAYS, HALF_HOURLY, HOURLY, HOURLY_AT_5];
+
+export const isTickHandlerDue = (cadence, minute) => {
+  if (cadence === ALWAYS) return true;
+  if (cadence === HALF_HOURLY) return shouldRunOnMinute(minute, 30);
+  if (cadence === HOURLY) return shouldRunOnMinute(minute, 60);
+  // The agent-eval harness runs once an hour at minute 5, off the
+  // hour-on-the-hour traffic spike. Phase 6 (C.3): the drift trend chart in
+  // Diagnostics is fed from `agent_eval_runs`.
+  if (cadence === HOURLY_AT_5) return minute === 5;
+  return false;
+};
+
+// Every handler tick can run. `name` is the allow-list key AND the worker row
+// in cron_health, so renaming one orphans its heartbeat history.
+export const TICK_HANDLERS = [
+  { name: "push/send",            cadence: ALWAYS, fn: pushSend,     opts: { path: "/api/push/send" } },
+  // Phase C: drain the extraction_jobs queue. Runs every
+  // tick so a large-PDF background extraction makes
+  // progress promptly. The worker bounds itself to ~18s
+  // per tick (inside the cron-mux 20s budget) and processes
+  // up to MAX_JOBS_PER_TICK jobs per invocation.
+  { name: "extraction/jobs",      cadence: ALWAYS, fn: extractionJobsCron, opts: { path: "/api/cron/extraction_jobs" } },
+  // Prospecting dispatch runs every tick; the inner send-window
+  // + daily-cap checks gate which campaigns actually fire (C.6).
+  { name: "prospecting/run",      cadence: ALWAYS, fn: prospectingRun, opts: { path: "/api/prospecting/run", method: "POST" } },
+  { name: "inbound/email/parse",  cadence: ALWAYS, fn: inboundParse, opts: { path: "/api/inbound/email/parse" } },
+  // Phase 2 (audit): drain the four producer-without-consumer
+  // queues every tick. Order matters: the linked-email worker
+  // creates orders that the inbound_messages consumer also
+  // touches, but they pick from disjoint tables so concurrent
+  // execution is safe. auto_ocr runs after the order-creating
+  // workers so newly-linked documents are picked up the same
+  // tick.
+  // Audit P5.4: persist_attachments runs BEFORE draft_orders so
+  // any inline attachment bytes are uploaded to storage and a
+  // documents row is created; then draft_orders links the
+  // documents into the new order via order_documents and
+  // auto_ocr picks them up downstream.
+  { name: "inbound/email/persist_attachments", cadence: ALWAYS, fn: inboundEmailPersistAttachments, opts: { path: "/api/inbound/email/persist_attachments" } },
+  { name: "inbound/email/draft_orders", cadence: ALWAYS, fn: inboundEmailDraftOrders, opts: { path: "/api/inbound/email/draft_orders" } },
+  { name: "voice/process_actions",      cadence: ALWAYS, fn: voiceProcessActions,     opts: { path: "/api/voice/process_actions" } },
+  { name: "inbound/process_messages",   cadence: ALWAYS, fn: inboundProcessMessages,  opts: { path: "/api/inbound/process_messages" } },
+  { name: "inbound/auto_ocr",           cadence: ALWAYS, fn: inboundAutoOcr,          opts: { path: "/api/inbound/auto_ocr" } },
+  // Audit P6.8: drain inbound_emails with actionable
+  // classified_intent values (payment_acknowledge etc.) and
+  // update the matching agent_goals.
+  { name: "agents/handle_replies", cadence: ALWAYS, fn: agentsHandleReplies, opts: { path: "/api/agents/handle_replies" } },
+  // Logistics monitor: detect delay/SLA exceptions + escalate. Gated to
+  // tenants with logistics_monitor_enabled (none by default); idempotent.
+  { name: "logistics/monitor",    cadence: ALWAYS, fn: logisticsMonitorTick, opts: { path: "/api/cron/logistics-monitor-tick" } },
+  ...RETRIES.map((h) => ({ ...h, cadence: ALWAYS })),
+  // ERP + PLM syncs, in parallel.
+  ...SYNCS.map((h) => ({ ...h, cadence: HALF_HOURLY })),
+  { name: "agents/run", cadence: HOURLY, fn: agentsRun, opts: { path: "/api/agents/run" } },
+  // Bet 5: drain unreported tally_drift_billing_meter rows to
+  // Stripe meters / Razorpay add-ons. Idempotent; safe to run
+  // every hour even when there's nothing to drain.
+  { name: "drift-meter", cadence: HOURLY, fn: driftMeterCron, opts: { path: "/api/cron/drift-meter" } },
+  // Agent eval harness + golden-set re-score. The re-score measures live
+  // extraction accuracy vs the human-verified golden corpus
+  // (EVAL_GOLDEN_TENANT_ID); it no-ops cheaply when unset.
+  { name: "eval/agent_eval", cadence: HOURLY_AT_5, fn: agentEval, opts: { path: "/api/eval/agent_eval" } },
+  { name: "eval/rescore", cadence: HOURLY_AT_5, fn: evalRescore, opts: { path: "/api/eval/rescore", method: "POST", body: {} } },
+];
+
+// What runs when CRON_TICK_HANDLERS is unset. extraction/jobs only advances
+// extraction work a user already queued for one of their own orders: it sends
+// nothing outside Anvil and creates nothing new.
+export const DEFAULT_TICK_HANDLERS = Object.freeze(["extraction/jobs"]);
+
+// Parse CRON_TICK_HANDLERS against the registered names.
+//   mode     "default" | "all" | "none" | "list"
+//   allowed  Set of registered names that may run
+//   unknown  names in the list that are not registered (reported, ignored)
+// A blank value counts as unset. "none" and "all" win over any names listed
+// beside them, and "none" wins over "all": an off switch must not be undone
+// by a stray word.
+export const resolveTickAllowList = (raw, registeredNames) => {
+  const registered = new Set(registeredNames);
+  const tokens = String(raw ?? "")
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+  if (tokens.length === 0) {
+    return {
+      mode: "default",
+      allowed: new Set(DEFAULT_TICK_HANDLERS.filter((n) => registered.has(n))),
+      unknown: [],
+    };
+  }
+  if (tokens.includes("none")) return { mode: "none", allowed: new Set(), unknown: [] };
+  if (tokens.includes("all")) return { mode: "all", allowed: registered, unknown: [] };
+  const unique = [...new Set(tokens)];
+  return {
+    mode: "list",
+    allowed: new Set(unique.filter((t) => registered.has(t))),
+    unknown: unique.filter((t) => !registered.has(t)),
+  };
+};
+
+// The handler, with its collaborators injectable so the gate can be tested
+// without running the real drains. Production uses the defaults.
+export const createTickHandler = ({
+  handlers = TICK_HANDLERS,
+  secret = CRON_SECRET,
+  runGroup = runCronGroup,
+  heartbeat = recordCronHeartbeat,
+  now = () => new Date(),
+  env = process.env,
+} = {}) => async function tickHandler(req, res) {
   if (handlePreflight(req, res)) return;
   applyCors(req, res);
   try {
     const auth = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-    if (!CRON_SECRET || auth !== CRON_SECRET) {
+    if (!secret || auth !== secret) {
       return json(res, 401, { error: { message: "tick is cron-only" } });
     }
-    const startedAt = new Date();
+    const startedAt = now();
     const minute = startedAt.getUTCMinutes();
-    const ranSyncs = shouldRunOnMinute(minute, 30);
-    const ranAgents = shouldRunOnMinute(minute, 60);
-    // Run the agent-eval harness once per hour at minute 5 (off the
-    // hour-on-the-hour traffic spike). Phase 6 (C.3) — drift trend
-    // chart in Diagnostics is fed from `agent_eval_runs`.
-    const ranAgentEval = minute === 5;
+    const gate = resolveTickAllowList(env.CRON_TICK_HANDLERS, handlers.map((h) => h.name));
 
-    // ALWAYS: every-5-min items.
-    const alwaysGroup = [
-      { name: "push/send",            fn: pushSend,     opts: { path: "/api/push/send" } },
-      // Phase C: drain the extraction_jobs queue. Runs every
-      // tick so a large-PDF background extraction makes
-      // progress promptly. The worker bounds itself to ~18s
-      // per tick (inside the cron-mux 20s budget) and processes
-      // up to MAX_JOBS_PER_TICK jobs per invocation.
-      { name: "extraction/jobs",      fn: extractionJobsCron, opts: { path: "/api/cron/extraction_jobs" } },
-      // Prospecting dispatch runs every tick; the inner send-window
-      // + daily-cap checks gate which campaigns actually fire (C.6).
-      { name: "prospecting/run",      fn: prospectingRun, opts: { path: "/api/prospecting/run", method: "POST" } },
-      { name: "inbound/email/parse",  fn: inboundParse, opts: { path: "/api/inbound/email/parse" } },
-      // Phase 2 (audit): drain the four producer-without-consumer
-      // queues every tick. Order matters: the linked-email worker
-      // creates orders that the inbound_messages consumer also
-      // touches, but they pick from disjoint tables so concurrent
-      // execution is safe. auto_ocr runs after the order-creating
-      // workers so newly-linked documents are picked up the same
-      // tick.
-      // Audit P5.4: persist_attachments runs BEFORE draft_orders so
-      // any inline attachment bytes are uploaded to storage and a
-      // documents row is created; then draft_orders links the
-      // documents into the new order via order_documents and
-      // auto_ocr picks them up downstream.
-      { name: "inbound/email/persist_attachments", fn: inboundEmailPersistAttachments, opts: { path: "/api/inbound/email/persist_attachments" } },
-      { name: "inbound/email/draft_orders", fn: inboundEmailDraftOrders, opts: { path: "/api/inbound/email/draft_orders" } },
-      { name: "voice/process_actions",      fn: voiceProcessActions,     opts: { path: "/api/voice/process_actions" } },
-      { name: "inbound/process_messages",   fn: inboundProcessMessages,  opts: { path: "/api/inbound/process_messages" } },
-      { name: "inbound/auto_ocr",           fn: inboundAutoOcr,          opts: { path: "/api/inbound/auto_ocr" } },
-      // Audit P6.8: drain inbound_emails with actionable
-      // classified_intent values (payment_acknowledge etc.) and
-      // update the matching agent_goals.
-      { name: "agents/handle_replies", fn: agentsHandleReplies, opts: { path: "/api/agents/handle_replies" } },
-      // Logistics monitor: detect delay/SLA exceptions + escalate. Gated to
-      // tenants with logistics_monitor_enabled (none by default); idempotent.
-      { name: "logistics/monitor",    fn: logisticsMonitorTick, opts: { path: "/api/cron/logistics-monitor-tick" } },
-      ...RETRIES,
-    ];
-    const groupAlways = await runCronGroup(alwaysGroup);
-
-    // ON 30-MIN: ERP syncs in parallel.
-    let groupSyncs = [];
-    if (ranSyncs) groupSyncs = await runCronGroup(SYNCS);
-
-    // ON HOUR: agents + drift-meter drain.
-    let groupAgents = [];
-    if (ranAgents) {
-      groupAgents = await runCronGroup([
-        { name: "agents/run", fn: agentsRun, opts: { path: "/api/agents/run" } },
-        // Bet 5: drain unreported tally_drift_billing_meter rows to
-        // Stripe meters / Razorpay add-ons. Idempotent; safe to run
-        // every hour even when there's nothing to drain.
-        { name: "drift-meter", fn: driftMeterCron, opts: { path: "/api/cron/drift-meter" } },
-      ]);
+    const results = [];
+    const skippedByGate = [];
+    const notDue = [];
+    for (const cadence of CADENCE_ORDER) {
+      const due = isTickHandlerDue(cadence, minute);
+      const toRun = [];
+      for (const h of handlers.filter((x) => x.cadence === cadence)) {
+        if (!gate.allowed.has(h.name)) skippedByGate.push(h.name);
+        else if (!due) notDue.push(h.name);
+        else toRun.push(h);
+      }
+      if (toRun.length) results.push(...await runGroup(toRun));
     }
 
-    // ON minute=5 (hourly off-peak): agent eval harness + golden-set re-score.
-    // The re-score measures live extraction accuracy vs the human-verified
-    // golden corpus (EVAL_GOLDEN_TENANT_ID); it no-ops cheaply when unset.
-    let groupAgentEval = [];
-    if (ranAgentEval) {
-      groupAgentEval = await runCronGroup([
-        { name: "eval/agent_eval", fn: agentEval, opts: { path: "/api/eval/agent_eval" } },
-        { name: "eval/rescore", fn: evalRescore, opts: { path: "/api/eval/rescore", method: "POST", body: {} } },
-      ]);
-    }
-
-    const results = [...groupAlways, ...groupSyncs, ...groupAgents, ...groupAgentEval];
     const okCount = results.filter((r) => r.ok).length;
     const errCount = results.filter((r) => !r.ok).length;
-    const durationMs = Date.now() - startedAt.getTime();
+    const durationMs = now().getTime() - startedAt.getTime();
+    const ranSyncs = isTickHandlerDue(HALF_HOURLY, minute);
+    const ranAgents = isTickHandlerDue(HOURLY, minute);
+    const ranAgentEval = isTickHandlerDue(HOURLY_AT_5, minute);
 
     // Audit P5.1: heartbeat after the work, not before, so a tick
     // that crashes mid-run does not falsely advertise the worker
     // as healthy. We record per-sub-handler heartbeats too via the
     // results array so on-call can see which specific drain went
-    // dark instead of just "tick stopped firing".
-    await recordCronHeartbeat("cron/tick", {
+    // dark instead of just "tick stopped firing". A handler the
+    // gate skipped writes no heartbeat, because it did not run.
+    await heartbeat("cron/tick", {
       status: errCount === 0 ? "ok" : (okCount > 0 ? "partial" : "error"),
       durationMs,
       metadata: {
         minute, ran_syncs: ranSyncs, ran_agents: ranAgents,
         ran_agent_eval: ranAgentEval, total: results.length,
         ok: okCount, failed: errCount,
+        gate_mode: gate.mode, skipped_by_gate: skippedByGate.length,
       },
     });
     for (const r of results) {
-      await recordCronHeartbeat(r.name, {
+      await heartbeat(r.name, {
         status: r.ok ? "ok" : "error",
         durationMs: r.duration_ms || 0,
         metadata: r.error ? { error: String(r.error).slice(0, 200) } : { status: r.status },
@@ -246,9 +321,19 @@ export default async function handler(req, res) {
     return json(res, 200, {
       ran_at: startedAt.toISOString(),
       minute,
+      // These three say which cadences were DUE this minute. Whether their
+      // handlers ran also depends on the gate, so read `ran` for that.
       ran_syncs: ranSyncs,
       ran_agents: ranAgents,
       ran_agent_eval: ranAgentEval,
+      gate: {
+        mode: gate.mode,
+        handlers: handlers.map((h) => h.name).filter((n) => gate.allowed.has(n)),
+        unknown: gate.unknown,
+      },
+      ran: results.map((r) => r.name),
+      skipped_by_gate: skippedByGate,
+      not_due: notDue,
       total: results.length,
       ok: okCount,
       failed: errCount,
@@ -257,7 +342,9 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     // Heartbeat the failure so the health probe reports it.
-    await recordCronHeartbeat("cron/tick", { status: "error", metadata: { error: String(err.message || err).slice(0, 200) } });
+    await heartbeat("cron/tick", { status: "error", metadata: { error: String(err.message || err).slice(0, 200) } });
     sendError(res, err);
   }
-}
+};
+
+export default createTickHandler();

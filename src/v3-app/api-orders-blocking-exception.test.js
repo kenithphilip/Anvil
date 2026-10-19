@@ -11,7 +11,7 @@
 // in-memory Supabase. The approve body is the one the Kanban and the queue
 // send (approvalPatch). Every name, clause and id is invented.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createMemoryDb, callHandler } from "./test-memory-supabase";
 import { approvalPatch } from "./lib/helpers";
 
@@ -31,11 +31,13 @@ vi.mock("../api/eval/promote.js", () => ({ promoteApprovedOrder: vi.fn(async () 
 
 const { default: patchOrder } = await import("../api/orders/[id].js");
 const { default: decideHandler } = await import("../api/orders/terms_decide.js");
+const { default: exceptionsHandler } = await import("../api/orders/exceptions.js");
 
 const id = (n) => "00000000-0000-4000-8000-0000000000" + n;
 const T1 = id("01"), T2 = id("02");
 const O1 = id("d1"), CHECK = id("e1"), FLAG = id("e2");
 const ENG = id("a1"), MGR = id("a2");
+const CUST = id("c1"), RUN = id("f2");
 
 const LD_TITLE = "Liquidated damages: only the PO states it";
 
@@ -71,6 +73,9 @@ const seed = ({ mode = "on", orders = [order()], flags = [criticalFlag()] } = {}
     }],
     order_term_flags: flags,
     order_term_decisions: [],
+    customers: [{ id: CUST, tenant_id: T1, customer_name: "Gate Test Buyer", gstin: "27AAACG0000A1Z5", state_code: "27" }],
+    customer_vendor_codes: [],
+    extraction_runs: [{ id: RUN, tenant_id: T1, status: "ok", confidence_overall: 0.97, adapter_used: "gemini", anomalies: [], validator_issues: [] }],
   }, {}, { project: true });
 };
 
@@ -130,6 +135,42 @@ describe("approve: an undecided critical terms flag", () => {
     expect(r.status).toBe(409);
     expect(r.body.error.blocking.map((b) => b.key).sort()).toEqual(["terms_flag|clause:JURISDICTION", "terms_flag|clause:LD_PENALTY"]);
     expect(r.body.error.message).toMatch(/^Cannot approve this order\. Blocked by: .+; .+\. Decide them on the order first\.$/);
+  });
+
+  it("refuses the send rows the workspace's list shows, read from the same inputs", async () => {
+    // An order with a customer and an extraction run: the list the workspace
+    // reads (GET /api/orders/exceptions) is built from those too.
+    seed({ orders: [order({ customer_id: CUST, preflight_payload: { extraction_run_id: RUN } })] });
+    const list = await callHandler(exceptionsHandler, { method: "GET", query: { id: O1 } });
+    expect(list.status).toBe(200);
+    const shown = list.body.rows.filter((x) => x.blocks === "send" && !x.shadow && x.status === "open").map((x) => x.key);
+    expect(shown).toEqual(["terms_flag|clause:LD_PENALTY"]);
+
+    const r = await patch(approvalPatch(row()));
+    expect(r.status).toBe(409);
+    expect(r.body.error.blocking.map((b) => b.key)).toEqual(shown);
+  });
+
+  it("refuses a re-approval from FAILED_TALLY_IMPORT, and lets it through once the flag is decided", async () => {
+    // The order was approved before the terms check flagged it (a manual run
+    // after approval), and its Tally import then failed. Every approve is
+    // gated, so the retry's re-approval meets the flag too.
+    seed({ orders: [order({
+      status: "FAILED_TALLY_IMPORT",
+      approval: { payloadHash: "hash-gate-1", approvedBy: MGR },
+      approval_actions: ["approve", "export_tally"],
+      approval_expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+    })] });
+
+    const r = await patch(approvalPatch(row()));
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatchObject({ code: "ORDER_HAS_BLOCKING_EXCEPTION", to: "APPROVED" });
+    expect(row().status).toBe("FAILED_TALLY_IMPORT");
+
+    expect((await decide("accept")).status).toBe(200);
+    const again = await patch(approvalPatch(row()));
+    expect(again.status).toBe(200);
+    expect(row()).toMatchObject({ status: "APPROVED", approved_by: MGR });
   });
 });
 
@@ -195,10 +236,38 @@ describe("what never blocks", () => {
 });
 
 describe("fails closed", () => {
-  it("refuses the move when the terms flags cannot be read, and writes nothing", async () => {
+  let logged;
+  beforeEach(() => { logged = vi.spyOn(console, "error").mockImplementation(() => {}); });
+  afterEach(() => { logged.mockRestore(); });
+
+  const UNAVAILABLE = { code: "ORDER_EXCEPTIONS_UNAVAILABLE", message: "Could not check this order's exceptions. Try again.", to: "APPROVED" };
+
+  it("refuses the move with 503 when the terms flags cannot be read, says to try again, and writes nothing", async () => {
     H.db.failRead.order_term_flags = { message: "connection reset" };
     const r = await patch(approvalPatch(row()));
-    expect(r.status).toBeGreaterThanOrEqual(500);
+    expect(r.status).toBe(503);
+    expect(r.body.error).toEqual(UNAVAILABLE);
+    // The database's words go to the log, not to the person.
+    expect(JSON.stringify(r.body)).not.toContain("connection reset");
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("order-move-gate"), expect.objectContaining({ order_id: O1, to: "APPROVED", message: expect.stringContaining("connection reset") }));
     expect(row()).toMatchObject({ status: "PENDING_REVIEW", approval: null });
+  });
+
+  it("refuses the move with 503 when the tenant's settings cannot be read, with the check off", async () => {
+    seed({ mode: "off" });
+    H.db.failRead.tenant_settings = { message: "timeout" };
+    const r = await patch(approvalPatch(row()));
+    expect(r.status).toBe(503);
+    expect(r.body.error).toEqual(UNAVAILABLE);
+    expect(row().status).toBe("PENDING_REVIEW");
+  });
+
+  it("refuses the move with 503 when the customer master cannot be read", async () => {
+    seed({ orders: [order({ customer_id: CUST })] });
+    H.db.failRead.customers = { message: "connection reset" };
+    const r = await patch(approvalPatch(row()));
+    expect(r.status).toBe(503);
+    expect(r.body.error.code).toBe("ORDER_EXCEPTIONS_UNAVAILABLE");
+    expect(row().status).toBe("PENDING_REVIEW");
   });
 });

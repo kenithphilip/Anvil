@@ -5,10 +5,20 @@
 // and a direct API call never read that list, so the one blocker held only in
 // the browser, an undecided critical terms flag, could be dragged past once a
 // tenant sets terms_check_mode to on. PATCH /api/orders/:id now builds the
-// same list with the same builder (order-exceptions.js) before it moves an
+// same list with the same builder (order-exceptions.js), from the same inputs
+// read by the same reader (order-exceptions-inputs.js), before it moves an
 // order to PENDING_REVIEW or APPROVED, and refuses the move with 409
 // ORDER_HAS_BLOCKING_EXCEPTION, naming the rows. A person and an agent meet
 // one gate.
+//
+// The moves it guards:
+//   PENDING_REVIEW  a send for approval (from DRAFT or BLOCKED)
+//   APPROVED        every approve, whatever the order's status: the first
+//                   approve from PENDING_REVIEW, and a re-approval from
+//                   FAILED_TALLY_IMPORT or of an order already APPROVED. An
+//                   order is never approved with a send row open. Nothing is
+//                   trapped by this: a terms flag is decided at any status
+//                   (terms_decide.js).
 //
 // Which rows stop which move, by each row's blocks:
 //   send      the move to PENDING_REVIEW, and the move to APPROVED: an order
@@ -21,17 +31,21 @@
 //             here: resolve_finding cannot clear them, and the server must
 //             never refuse an order that nobody can clear.
 //
-// Stored data only: the order as the PATCH leaves it, and the terms check's
-// stored flags and decisions. No LLM call and no reconcile. The customer
-// master and the extraction run feed no send row, so they are not read; a new
-// source of send rows must be read here too. With the check off (the default
-// for every tenant) the gate costs one tenant_settings read.
+// Stored data only: the order as the PATCH leaves it, its customer and
+// extraction run, and the terms check's stored flags and decisions. No LLM
+// call and no reconcile. Never the shadow rows: they never block.
+//
+// Fails closed. When the inputs cannot be read the move is refused with 503
+// ORDER_EXCEPTIONS_UNAVAILABLE, which says to try again. Before migration 250
+// there is no terms check, so the reader returns no terms rows and the move
+// goes ahead.
 
 import { buildOrderExceptions, blockingRows } from "./order-exceptions.js";
+import { readExceptionInputs } from "./order-exceptions-inputs.js";
 import { blockerSentence } from "./order-next-step.js";
-import { readTermsSettings, readTermsView } from "./terms/check.js";
 
 export const BLOCKING_EXCEPTION_CODE = "ORDER_HAS_BLOCKING_EXCEPTION";
+export const EXCEPTIONS_UNAVAILABLE_CODE = "ORDER_EXCEPTIONS_UNAVAILABLE";
 
 // The moves the gate guards, and how the refusal names each.
 const MOVES = Object.freeze({
@@ -59,26 +73,30 @@ export const blockingExceptionError = (rows, to) => ({
   },
 });
 
-// The terms view the gate reads. Never the shadow rows (they never block),
-// and none before migration 250 (no check can exist then). Any other read
-// error is thrown: the move is refused rather than let through unchecked.
-const readTerms = async (svc, ctx, orderId) => {
-  try {
-    const settings = await readTermsSettings(svc, ctx.tenantId);
-    const out = await readTermsView(svc, ctx, orderId, { includeShadow: false, settings });
-    return { view: out.status === "ok" ? out.view : null, policy: settings.policy || null };
-  } catch (err) {
-    if (err && err.code === "MIGRATION_NOT_APPLIED") return { view: null, policy: null };
-    throw err;
-  }
-};
+// The 503 body when the inputs cannot be read. The database's own words are
+// logged, not shown: the person is told the check is unavailable for now.
+export const exceptionsUnavailableError = (to) => ({
+  error: {
+    code: EXCEPTIONS_UNAVAILABLE_CODE,
+    message: "Could not check this order's exceptions. Try again.",
+    to,
+  },
+});
 
-// null when the move may go ahead, else { status: 409, body }. `order` is the
+// null when the move may go ahead, else { status, body }: 409 when an open
+// row blocks the move, 503 when the inputs cannot be read. `order` is the
 // order as the PATCH leaves it.
 export const checkMoveBlockers = async (svc, ctx, { order, to }) => {
   if (!isGatedMove(to) || !order || !order.id) return null;
-  const terms = await readTerms(svc, ctx, order.id);
-  const exceptions = buildOrderExceptions({ order, terms: terms.view, termsPolicy: terms.policy });
-  const rows = rowsBlockingMove(exceptions, to);
+  let inputs;
+  try {
+    inputs = await readExceptionInputs(svc, ctx, order, { includeShadow: false });
+  } catch (err) {
+    console.error("[order-move-gate] exceptions inputs unreadable; move refused", {
+      tenant_id: ctx.tenantId, order_id: order.id, to, message: err && err.message,
+    });
+    return { status: 503, body: exceptionsUnavailableError(to) };
+  }
+  const rows = rowsBlockingMove(buildOrderExceptions(inputs), to);
   return rows.length ? { status: 409, body: blockingExceptionError(rows, to) } : null;
 };

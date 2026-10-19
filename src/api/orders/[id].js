@@ -160,9 +160,10 @@ export default async function handler(req, res) {
         return json(res, 200, { order: rf });
       }
 
-      // CM P3b: a routine rule_findings overwrite (e.g. the "Run validation"
-      // step) must NOT silently drop an unresolved extraction blocker — carry it
-      // forward so the only way to clear it is the explicit resolve above.
+      // CM P3b: a routine rule_findings overwrite (e.g. the "Re-run checks"
+      // step) must NOT silently drop an unresolved blocker (the extraction
+      // shortfall, the -MOD finding): carry it forward so the only way to
+      // clear it is the explicit resolve above.
       if ("rule_findings" in body) patch.rule_findings = mergeBlockersForward(body.rule_findings, prev.rule_findings);
 
       // Audit P1.5 (May 2026): block transitions that skip the
@@ -240,8 +241,11 @@ export default async function handler(req, res) {
       // Plan R-F1 (c): a move to PENDING_REVIEW or APPROVED is refused while
       // an open exception blocks it, so the Kanban, the Approvals queue and a
       // direct call meet the rule the workspace's button shows. The list is
-      // built from the order as this PATCH leaves it, with the builder the
-      // workspace uses. Nothing is written. See _lib/order-move-gate.js.
+      // built from the order as this PATCH leaves it, with the builder and
+      // the input reader the workspace's list uses. Nothing is written. Every
+      // approve is gated, a re-approval from FAILED_TALLY_IMPORT or of an
+      // APPROVED order included; a send only when the status changes. See
+      // _lib/order-move-gate.js.
       const gatedMove = body.status === "APPROVED"
         || (body.status === "PENDING_REVIEW" && prev.status !== "PENDING_REVIEW");
       if (gatedMove) {

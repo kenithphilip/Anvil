@@ -305,16 +305,16 @@ export const reconcileOrderQuotes = async (svc, ctx, orderId, opts = {}) => {
     // Preserve an existing RESOLVED one rather than re-raising it: the
     // operator has already said the provisional numbers are intentional.
     const existing = priorFindings.find((f) => (f?.code || f?.rule_id) === MOD_BOM_FINDING_CODE);
-    // (incoming, prior): the new array first. Reversing these would have
-    // treated the OLD findings as the result and merged the new ones in as
-    // carry-forwards, which mergeBlockersForward only does for
-    // source === "extraction" entries, so the -MOD finding would have been
-    // dropped every time.
+    // (incoming, prior): the new array first, so the fresh finding stands
+    // in for an old unresolved copy of the same code.
     nextFindings = existing && !isUnresolvedBlocker(existing)
       ? priorFindings
       : mergeBlockersForward([...withoutMod, modFinding], priorFindings);
   } else {
-    nextFindings = mergeBlockersForward(withoutMod, priorFindings);
+    // The condition cleared. mergeBlockersForward carries every unresolved
+    // blocker forward, the -MOD finding included, so it is given the prior
+    // findings without it: any other blocker stays, this one goes.
+    nextFindings = mergeBlockersForward(withoutMod, withoutMod);
   }
   const quoteReconciliation = {
     as_of: nowIso,

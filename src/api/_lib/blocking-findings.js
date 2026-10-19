@@ -55,15 +55,24 @@ export const projectAnomaliesToFindings = (anomalies) => {
 };
 
 // When a PATCH replaces rule_findings wholesale (e.g. the operator "Run
-// validation" step), carry forward any prior UNRESOLVED extraction blocker not
-// present by code in the incoming array — so a routine validation run can't
-// silently drop the push-block. Clearing a blocker requires the explicit
-// resolve action (which stamps resolved:true), never an incidental overwrite.
+// validation" step), carry forward any prior UNRESOLVED blocker not present
+// by code in the incoming array, so a routine validation run can't silently
+// drop the push-block. That is every blocker, whoever raised it: the
+// extraction shortfall (source "extraction") and the reconcile's -MOD finding
+// (mod-parts.js, no source). Only the extraction one used to be carried, so
+// "Re-run checks" dropped the -MOD finding, and the Kanban, the Approvals
+// queue or a direct call could then approve the order (plan C-3). Clearing a
+// blocker requires the explicit resolve action (which stamps resolved:true),
+// never an incidental overwrite. A caller that drops a blocker because its
+// condition is gone (the reconcile, once the -MOD parts are final) leaves it
+// out of `prior` as well.
+const findingCode = (f) => (f && (f.code || f.rule_id)) || null;
+
 export const mergeBlockersForward = (incoming, prior) => {
   const next = Array.isArray(incoming) ? incoming.slice() : [];
-  const codes = new Set(next.map((f) => f && (f.code || f.rule_id)).filter(Boolean));
+  const codes = new Set(next.map(findingCode).filter(Boolean));
   for (const p of (Array.isArray(prior) ? prior : [])) {
-    if (isUnresolvedBlocker(p) && p.source === "extraction" && !codes.has(p.code)) next.push(p);
+    if (isUnresolvedBlocker(p) && !codes.has(findingCode(p))) next.push(p);
   }
   return next;
 };

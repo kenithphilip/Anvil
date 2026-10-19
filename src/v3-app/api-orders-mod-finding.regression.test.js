@@ -5,6 +5,7 @@
 // order-reconcile.js). The server refused its approval before the exceptions
 // gate (plan C-3) existed, a Kanban drop included, as
 // ORDER_HAS_UNRESOLVED_BLOCKER. These tests keep it so with the gate in place,
+// keep it through the workspace's "Re-run checks" (which used to drop it),
 // and keep the escape hatch: an approver resolves the finding, then approves.
 //
 // The REAL orders/[id].js runs against an in-memory Supabase, with the terms
@@ -88,6 +89,31 @@ describe("the server-held -MOD finding", () => {
     expect(r.body.error.finding).toMatchObject({ code: "mod_quote_bom_pending" });
     expect(row()).toMatchObject({ status: "PENDING_REVIEW", approval: null });
     expect(H.audits.map((a) => a.action)).not.toContain("approve_order");
+  });
+
+  it("survives the workspace's Re-run checks, so the approve after it is still refused", async () => {
+    // Re-run checks PATCHes rule_findings with the anomaly rules' flags only.
+    // Only an extraction blocker used to be carried forward, so this dropped
+    // the -MOD finding and the Kanban approve below then went through.
+    as(ENG, "sales_engineer");
+    const rerun = await patch({ rule_findings: [{ key: "price_outlier", severity: "WARNING", detail: "Line 2 is 30% above the customer's last price." }] });
+    expect(rerun.status).toBe(200);
+    expect(row().rule_findings.map((f) => f.code || f.key)).toEqual(["price_outlier", "mod_quote_bom_pending"]);
+
+    as(MGR, "sales_manager");
+    const r = await patch(approvalPatch(row()));
+    expect(r.status).toBe(409);
+    expect(r.body.error.code).toBe("ORDER_HAS_UNRESOLVED_BLOCKER");
+    expect(r.body.error.finding).toMatchObject({ code: "mod_quote_bom_pending", pending_parts: ["GN-7-MOD"] });
+    expect(row()).toMatchObject({ status: "PENDING_REVIEW", approval: null });
+  });
+
+  it("survives an empty Re-run checks too", async () => {
+    as(ENG, "sales_engineer");
+    expect((await patch({ rule_findings: [] })).status).toBe(200);
+    expect(row().rule_findings).toEqual([MOD]);
+    as(MGR, "sales_manager");
+    expect((await patch(approvalPatch(row()))).body.error.code).toBe("ORDER_HAS_UNRESOLVED_BLOCKER");
   });
 
   it("is what the workspace shows too: an approval row that disables Approve", () => {

@@ -280,7 +280,7 @@ describe("PipelineKanban", () => {
     await dragTo("PO-DRAFT", "Validate");
 
     expect(serverUpdate).toHaveBeenCalledWith("o-draft", { status: "PENDING_REVIEW" });
-    expect(await screen.findByText(/Cannot send this order for approval\. Blocked by: Liquidated damages: only the PO states it\./)).toBeTruthy();
+    expect(await screen.findByText(/Cannot send this order for approval\. Blocked by: Liquidated damages: only the PO states it\. Decide it on the order first\. The board has been reloaded\./)).toBeTruthy();
     expect(db.orders[0].status).toBe("DRAFT");
     await waitFor(() => expect(within(column("Inbox")).getByText("PO-DRAFT")).toBeTruthy());
   });

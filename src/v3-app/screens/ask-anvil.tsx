@@ -69,6 +69,7 @@ const fmtValue = (unit: string, value: number | null): string => {
   if (unit === "currency") return fmtINR(value);
   if (unit === "percent") return value + "%";
   if (unit === "days") return value + (value === 1 ? " day" : " days");
+  if (unit === "hours") return value + (value === 1 ? " hour" : " hours");
   return Number(value).toLocaleString("en-IN");
 };
 

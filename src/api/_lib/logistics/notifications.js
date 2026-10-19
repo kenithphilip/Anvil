@@ -8,6 +8,8 @@
 
 import { notifyAdmins } from "../notifications.js";
 import { commsRow } from "../comms-row.js";
+import { alertRecipientsForRoles } from "../internal-recipients.js";
+import { makeAlertEmailBudget } from "../alert-email-budget.js";
 
 const RANK = { info: 1, warn: 2, bad: 3, critical: 4 };
 // Only these can ever notify (the loop's own isHigh gate is `>= bad`), so the
@@ -122,8 +124,18 @@ export const dispatchLogisticsNotifications = async (svc, tenantId) => {
 
   let bellSent = 0;
   let emailQueued = 0;
+  let emailSkipped = 0;
   let breachSent = 0;
   let digested = 0;
+
+  // Alert email recipients, resolved once per role set per run (one member
+  // read and one auth lookup per member, not one per exception).
+  const recipientCache = new Map();
+  const recipientsFor = (roles) => {
+    const key = [...roles].sort().join(",");
+    if (!recipientCache.has(key)) recipientCache.set(key, alertRecipientsForRoles(svc, tenantId, roles));
+    return recipientCache.get(key);
+  };
 
   // Enabling the monitor on a tenant with history opens a large backlog at once,
   // and every one of those would otherwise ring its own bell. One bell per
@@ -134,29 +146,50 @@ export const dispatchLogisticsNotifications = async (svc, tenantId) => {
   // Past the threshold, send ONE digest and mark the batch as belled. The
   // exceptions themselves are unaffected — they are all on the delays screen,
   // with their severities and SLA clocks intact.
+  //
+  // The digest stands in for the alert email too. Each exception in it is
+  // stamped email_skipped "digested"; otherwise every one would still queue
+  // its own addressed email, 25 a tick, until the whole backlog had been
+  // mailed to every member of the alert roles.
   const needFirstBell = pending.filter((e) => isHighSev(e) && !e.detail?.notified?.bell_at);
   if (needFirstBell.length > DIGEST_THRESHOLD) {
     const digestOk = await sendDigest(svc, tenantId, needFirstBell, rolesFor);
     if (digestOk) {
       const stampedAt = new Date().toISOString();
+      const digestStamp = (e) => {
+        const prior = e.detail?.notified || {};
+        const next = { ...prior, bell_at: stampedAt, via: "digest" };
+        if (!prior.email_at) {
+          next.email_at = stampedAt;
+          next.email_skipped = "digested";
+        }
+        return { ...(e.detail || {}), notified: next };
+      };
       for (let i = 0; i < needFirstBell.length; i += 100) {
         const batch = needFirstBell.slice(i, i + 100);
-        await Promise.all(batch.map((e) => svc.from("logistics_exceptions")
-          .update({
-            detail: { ...(e.detail || {}), notified: { ...(e.detail?.notified || {}), bell_at: stampedAt, via: "digest" } },
-            updated_at: stampedAt,
-          })
-          .eq("tenant_id", tenantId)
-          .eq("id", e.id)
-          .then((r) => {
-            if (r.error) return;
-            e.detail = { ...(e.detail || {}), notified: { ...(e.detail?.notified || {}), bell_at: stampedAt, via: "digest" } };
-            digested += 1;   // count what PERSISTED, not what was attempted
-          })
-          .catch(() => {})));
+        await Promise.all(batch.map((e) => {
+          const nextDetail = digestStamp(e);
+          return svc.from("logistics_exceptions")
+            .update({ detail: nextDetail, updated_at: stampedAt })
+            .eq("tenant_id", tenantId)
+            .eq("id", e.id)
+            .then((r) => {
+              if (r.error) return;
+              e.detail = nextDetail;
+              digested += 1;   // count what PERSISTED, not what was attempted
+            })
+            .catch(() => {});
+        }));
       }
     }
   }
+
+  // Addressed alert emails per run and per tenant per day.
+  const emailBudget = makeAlertEmailBudget(svc, tenantId, "logistics_alert", {
+    perRun: process.env.LOGISTICS_MAX_ALERT_EMAILS_PER_RUN,
+    perDay: process.env.LOGISTICS_MAX_ALERT_EMAILS_PER_DAY,
+  });
+  let emailCapped = 0;
 
   let acted = 0;
   for (const e of pending) {
@@ -186,23 +219,48 @@ export const dispatchLogisticsNotifications = async (svc, tenantId) => {
       } catch (_) { /* best-effort */ }
     }
 
-    // 2. Email on first detection of a high-severity exception.
+    // 2. Email on first detection of a high-severity exception, to the same
+    //    roles the bell goes to. The row used to be queued with no recipient
+    //    at all, so the reaper failed every one. When no approved member of
+    //    those roles has an address, no row is written; the exception is
+    //    stamped with the reason so it leaves the query instead of holding a
+    //    place in the window on every tick.
+    //    Past the per-day cap the exception is stamped email_skipped
+    //    "daily_cap" (its bell still rang); past the per-run cap it waits
+    //    for the next run.
     if (!already.email_at && isHigh) {
       try {
-        await svc.from("communications").insert(commsRow({
-          tenant_id: tenantId,
-          direction: "outbound",
-          channel: "email",
-          template: "logistics_alert",
-          subject: label(e),
-          body: buildBody(e),
-          status: "queued",
-          object_type: "logistics_exception",
-          object_id: e.id,
-        }));
-        already.email_at = new Date().toISOString();
-        emailQueued += 1;
-        touched = true;
+        const to = await recipientsFor(rolesFor(e));
+        const gate = to ? await emailBudget.check() : null;
+        if (!to) {
+          already.email_at = new Date().toISOString();
+          already.email_skipped = "no_recipients";
+          emailSkipped += 1;
+          touched = true;
+        } else if (gate === "daily_cap") {
+          already.email_at = new Date().toISOString();
+          already.email_skipped = "daily_cap";
+          emailCapped += 1;
+          touched = true;
+        } else if (gate === "ok") {
+          await svc.from("communications").insert(commsRow({
+            tenant_id: tenantId,
+            direction: "outbound",
+            channel: "email",
+            template: "logistics_alert",
+            to_addr: to.to_addr,
+            cc_addrs: to.cc_addrs,
+            subject: label(e),
+            body: buildBody(e),
+            status: "queued",
+            object_type: "logistics_exception",
+            object_id: e.id,
+          }));
+          emailBudget.spend();
+          already.email_at = new Date().toISOString();
+          emailQueued += 1;
+          touched = true;
+        }
       } catch (_) { /* best-effort */ }
     }
 
@@ -243,5 +301,5 @@ export const dispatchLogisticsNotifications = async (svc, tenantId) => {
     }
   }
 
-  return { bellSent, emailQueued, breachSent, digested, pending: pending.length };
+  return { bellSent, emailQueued, emailSkipped, emailCapped, breachSent, digested, pending: pending.length };
 };

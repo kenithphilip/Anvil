@@ -199,3 +199,19 @@ export const resolveInternalRecipients = async (svc, tenantId, spec = {}) => {
   }
   return out;
 };
+
+// alertRecipientsForRoles(svc, tenantId, roles)
+//
+// The recipients of a system alert email (logistics or inventory) sent to
+// the tenant's own staff: the approved members with any of `roles`, through
+// the resolver above. Returns { to_addr, cc_addrs } for a communications
+// row, or null when no address resolves. A caller must not write a row for
+// null: a queued row with no recipient can only fail ("no recipient" in the
+// agents/run reaper). A member read failure throws, as the resolver does.
+export const alertRecipientsForRoles = async (svc, tenantId, roles) => {
+  const entries = (Array.isArray(roles) ? roles : []).map((role) => ROLE_TOKEN_PREFIX + role);
+  const resolved = await resolveInternalRecipients(svc, tenantId, { to: entries });
+  const emails = resolved.to.map((r) => r.email);
+  if (!emails.length) return null;
+  return { to_addr: emails[0], cc_addrs: emails.slice(1) };
+};

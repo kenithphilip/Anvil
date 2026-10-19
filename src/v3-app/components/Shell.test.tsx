@@ -123,3 +123,53 @@ describe("notification bell deep link", () => {
     await waitFor(() => expect(window.location.hash).toBe("#/admin?tab=tally"));
   });
 });
+
+/* The bell shows for admins and operators, but the server marks read for
+   admins only. An operator's mark-read was refused and the error swallowed,
+   so the count never went down and nothing said why. The refusal is shown;
+   the deep link still opens. */
+describe("notification bell: a refused mark-read is shown", () => {
+  const forbidden = () => Object.assign(new Error("Forbidden"), { status: 403 });
+  const openBell = async (backend: any) => {
+    installBackend({ notifications: backend });
+    window.location.hash = "#/home";
+    const view = render(
+      <Wrap>
+        <Shell route="home" nav={[]} role={{ id: "operator", label: "Operator", short: "OP" }}>x</Shell>
+      </Wrap>,
+    );
+    const bell = await waitFor(() => {
+      const b = view.container.querySelector('button[aria-label="1 unread notifications"]') as HTMLElement | null;
+      expect(b).not.toBeNull();
+      return b!;
+    });
+    fireEvent.click(bell);
+    return view;
+  };
+  const LIST = vi.fn(async () => ({
+    notifications: [{ id: "n-1", kind: "push_failed", title: "Push to ERP failed", link_route: "admin", link_params: { tab: "tally" } }],
+    unread_count: 1,
+  }));
+
+  it("says why when the server refuses to mark a row read, and still opens it", async () => {
+    const notifyWarn = vi.fn();
+    (window as any).notifyWarn = notifyWarn;
+    const markRead = vi.fn(async () => { throw forbidden(); });
+    const { getByText } = await openBell({ list: LIST, markRead });
+    fireEvent.click(getByText("Push to ERP failed"));
+    await waitFor(() => expect(markRead).toHaveBeenCalledWith("n-1"));
+    await waitFor(() => expect(notifyWarn).toHaveBeenCalledWith(
+      "Not marked as read", "Only an admin can mark notifications read, so the unread count stays."));
+    await waitFor(() => expect(window.location.hash).toBe("#/admin?tab=tally"));
+  });
+
+  it("says why when mark-all-read is refused", async () => {
+    const notifyWarn = vi.fn();
+    (window as any).notifyWarn = notifyWarn;
+    const markAllRead = vi.fn(async () => { throw new Error("notifications store unavailable"); });
+    const { getByText } = await openBell({ list: LIST, markRead: vi.fn(), markAllRead });
+    fireEvent.click(getByText(/mark all read/i));
+    await waitFor(() => expect(markAllRead).toHaveBeenCalled());
+    await waitFor(() => expect(notifyWarn).toHaveBeenCalledWith("Not marked as read", "notifications store unavailable"));
+  });
+});

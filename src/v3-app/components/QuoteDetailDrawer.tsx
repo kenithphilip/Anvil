@@ -387,6 +387,9 @@ export const QuoteDetailDrawer: React.FC<{
       const next = resp?.quote || resp;
       if (next?.status) setDraft((d: Quote) => ({ ...d, status: next.status, version: next.version ?? d.version }));
       if (resp?.margin_floor_override) window.notifyWarn?.("Sent below margin floor", "Recorded for approval review");
+      // The email left but the server could not finish (for example the
+      // quote did not move to SENT). Say so next to the success.
+      if (resp?.warning) window.notifyWarn?.("Sent, but not finished", String(resp.warning));
       window.notifySuccess?.(okMsg, draft.quote_number || quote.id?.slice(0, 8));
       onSaved?.();
     } catch (e: any) {
@@ -402,8 +405,17 @@ export const QuoteDetailDrawer: React.FC<{
   };
   const transition = (status: string, label: string) =>
     runLife(status, () => (AnvilBackend as any)?.quotes?.transition?.(quote.id, status), label);
+  // The server sends the email in the same request and moves the quote to
+  // SENT only when a provider accepted it. Say "sent" only then; otherwise
+  // show its reason and leave the quote as it was, so it can be sent again.
   const sendToCustomer = () =>
-    runLife("send", () => (AnvilBackend as any)?.quotes?.sendQuote?.(quote.id), "Quote sent to customer");
+    runLife("send", async () => {
+      const resp = await (AnvilBackend as any)?.quotes?.sendQuote?.(quote.id);
+      if (!resp || resp.sent !== true) {
+        throw new Error("Quote not sent: " + (resp?.error || "the server did not confirm the send"));
+      }
+      return resp;
+    }, "Quote sent to customer");
   const revise = () =>
     runLife("revise", async () => {
       const r = await (AnvilBackend as any)?.quotes?.revise?.(quote.id);

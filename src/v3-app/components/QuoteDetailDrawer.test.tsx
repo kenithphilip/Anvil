@@ -43,7 +43,7 @@ beforeEach(() => {
     audit: { list: vi.fn(async () => ({ events: [] })) },
     quotes: {
       transition: transitionSpy,
-      sendQuote: vi.fn(async (id: string) => ({ ok: true, quote: { id, status: "SENT" } })),
+      sendQuote: vi.fn(async (id: string) => ({ ok: true, sent: true, status: "sent", quote: { id, status: "SENT" } })),
       revise: vi.fn(async (id: string) => ({ quote: { id, status: "DRAFT", version: 2 } })),
       convertToOrder: vi.fn(async () => ({ ok: true })),
       cancel: vi.fn(async (id: string) => ({ quote: { id, status: "CANCELLED" } })),
@@ -298,5 +298,56 @@ describe("QuoteDetailDrawer Follow-up tab: Esc", () => {
     fireEvent.change(notes, { target: { value: "" } });
     fireEvent.keyDown(notes, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The server sends the quote email in the same request and answers `sent`.
+// "Quote sent to customer" is shown only when it is true; otherwise the reason
+// is shown and the quote keeps its status, so Send stays on offer.
+describe("QuoteDetailDrawer: Send to customer shows the server's result", () => {
+  let notifySuccess: any;
+  let notifyError: any;
+  beforeEach(() => {
+    notifySuccess = vi.fn();
+    notifyError = vi.fn();
+    (window as any).notifySuccess = notifySuccess;
+    (window as any).notifyError = notifyError;
+  });
+
+  it("says not sent, with the reason, when the server did not send it", async () => {
+    (window as any).AnvilBackend.quotes.sendQuote = vi.fn(async (id: string) => ({
+      ok: true, sent: false, status: "failed",
+      error: "No provider is configured for this channel, so the message was not sent.",
+      quote: { id, status: "DRAFT" },
+    }));
+    const { getByText, findByText } = render(<QuoteDetailDrawer quote={QUOTE} onClose={() => undefined} />);
+    fireEvent.click(getByText("Send to customer"));
+    expect(await findByText("Quote not sent: No provider is configured for this channel, so the message was not sent.")).toBeTruthy();
+    expect(notifyError).toHaveBeenCalledWith("Action failed", "Quote not sent: No provider is configured for this channel, so the message was not sent.");
+    expect(notifySuccess).not.toHaveBeenCalled();
+    // Still a draft: the send can be tried again.
+    expect(getByText("Send to customer")).toBeTruthy();
+  });
+
+  it("says sent and moves to SENT only when the server confirms it", async () => {
+    const { getByText, queryByText } = render(<QuoteDetailDrawer quote={QUOTE} onClose={() => undefined} />);
+    fireEvent.click(getByText("Send to customer"));
+    await waitFor(() => expect(notifySuccess).toHaveBeenCalledWith("Quote sent to customer", "Q-202605-0001"));
+    expect(notifyError).not.toHaveBeenCalled();
+    await waitFor(() => expect(queryByText("Send to customer")).toBeNull());
+  });
+
+  it("shows the server's warning when the email left but the quote did not reach SENT", async () => {
+    const notifyWarn = vi.fn();
+    (window as any).notifyWarn = notifyWarn;
+    const warning = "The email was sent, but the quote's status could not be changed to SENT (statement timeout). Do not send it again; mark it SENT.";
+    (window as any).AnvilBackend.quotes.sendQuote = vi.fn(async (id: string) => ({
+      ok: true, sent: true, status: "sent", error: null, warning,
+      quote: { id, status: "DRAFT" },
+    }));
+    const { getByText } = render(<QuoteDetailDrawer quote={QUOTE} onClose={() => undefined} />);
+    fireEvent.click(getByText("Send to customer"));
+    await waitFor(() => expect(notifyWarn).toHaveBeenCalledWith("Sent, but not finished", warning));
+    expect(notifySuccess).toHaveBeenCalledWith("Quote sent to customer", "Q-202605-0001");
   });
 });

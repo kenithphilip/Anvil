@@ -114,8 +114,12 @@ const CUSTOMER_COMMS_TYPES = new Set([
   "quote_email", "invoice_email",
 ]);
 const PAYMENT_COMMS_TYPES = new Set(["payment_reminder", "ar_reminder"]);
-// "Issued" = handed to the send path (queued or sent), i.e. not a saved draft.
-const isIssued = (c) => c.status !== "draft";
+// "Issued" = handed to the send path (queued or sent), i.e. not a saved draft
+// and not a failed attempt. A quote or copilot send that did not go is stored
+// `failed`; counting it would make a failed attempt plus its successful retry
+// two issued messages. Failed rows still count in comms_delivery_rate, which
+// is where a failure belongs.
+const isIssued = (c) => c.status !== "draft" && c.status !== "failed";
 
 // ── extraction quality (docai) ───────────────────────────────────────
 //
@@ -463,14 +467,14 @@ export const METRICS = [
   // shipping them now would measure fiction (always 0 replies).
   {
     id: "comms_sent", label: "Customer messages issued", domain: "communications", unit: "count",
-    description: "Customer-facing outbound messages in the window (queued or sent; excludes drafts and non-customer traffic like supplier RFQs / notifications), broken down by document type.",
+    description: "Customer-facing outbound messages in the window (queued or sent; excludes drafts, failed attempts and non-customer traffic like supplier RFQs / notifications), broken down by document type.",
     params: ["window_days"],
     fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
     reduce: (rows) => {
       const list = (rows || []).filter((c) => CUSTOMER_COMMS_TYPES.has(c.document_type) && isIssued(c));
       const breakdown = {};
       for (const c of list) breakdown[c.document_type] = (breakdown[c.document_type] || 0) + 1;
-      return { value: list.length, breakdown, provenance: "count(outbound customer-facing communications not in draft, created in window), grouped by document_type" };
+      return { value: list.length, breakdown, provenance: "count(outbound customer-facing communications not in draft or failed, created in window), grouped by document_type" };
     },
   },
   {
@@ -494,7 +498,7 @@ export const METRICS = [
     fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
     reduce: (rows) => ({
       value: (rows || []).filter((c) => c.document_type === "dispatch_register" && isIssued(c)).length,
-      provenance: "count(communications with document_type='dispatch_register', outbound, not draft, in window)",
+      provenance: "count(communications with document_type='dispatch_register', outbound, not draft or failed, in window)",
     }),
   },
   {
@@ -504,7 +508,7 @@ export const METRICS = [
     fetch: (svc, t, p) => fetchCommunications(svc, t, sinceIso(p.nowMs, p.windowDays)),
     reduce: (rows) => ({
       value: (rows || []).filter((c) => PAYMENT_COMMS_TYPES.has(c.document_type) && isIssued(c)).length,
-      provenance: "count(communications with document_type in {payment_reminder,ar_reminder}, outbound, not draft, in window)",
+      provenance: "count(communications with document_type in {payment_reminder,ar_reminder}, outbound, not draft or failed, in window)",
     }),
   },
   {

@@ -193,11 +193,21 @@ describe("communications reducers (item 7)", () => {
     { document_type: "quote_email", direction: "outbound", status: "draft", created_at: daysAgo(1) },     // draft -> excluded
   ];
 
-  it("comms_sent counts customer-facing, non-draft messages with a per-type breakdown", () => {
+  it("comms_sent counts customer-facing messages that were not drafts or failed attempts, with a per-type breakdown", () => {
     const r = reduceOf("comms_sent", comms);
-    expect(r.value).toBe(6);           // supplier_rfq + the draft quote are excluded
-    expect(r.breakdown).toEqual({ dispatch_register: 2, payment_reminder: 1, ar_reminder: 1, service_report: 1, quote_email: 1 });
+    expect(r.value).toBe(5);           // supplier_rfq, the draft quote and the failed service report are excluded
+    expect(r.breakdown).toEqual({ dispatch_register: 2, payment_reminder: 1, ar_reminder: 1, quote_email: 1 });
     expect(r.breakdown.supplier_rfq).toBeUndefined();
+  });
+
+  it("comms_sent counts a failed quote email and its successful retry as one issued message", () => {
+    const rows = [
+      { document_type: "quote_email", direction: "outbound", status: "failed", created_at: daysAgo(2) },
+      { document_type: "quote_email", direction: "outbound", status: "sent", created_at: daysAgo(2) },
+    ];
+    expect(reduceOf("comms_sent", rows)).toMatchObject({ value: 1, breakdown: { quote_email: 1 } });
+    // The failure still shows where it belongs: in the delivery rate.
+    expect(reduceOf("comms_delivery_rate", rows)).toMatchObject({ count: 1, denominator: 2 });
   });
 
   it("comms_delivery_rate = sent+replied over attempted (surfaces queued/failed, customer-only)", () => {
@@ -239,7 +249,7 @@ describe("communications reducers (item 7)", () => {
   it("computeMetric wires a windowed comms metric end to end", async () => {
     const svc = makeSvc({ communications: comms });
     const ans = await computeMetric(svc, "t1", "comms_sent", { window_days: 30 }, NOW);
-    expect(ans).toMatchObject({ metric_id: "comms_sent", unit: "count", domain: "communications", value: 6, window_days: 30 });
+    expect(ans).toMatchObject({ metric_id: "comms_sent", unit: "count", domain: "communications", value: 5, window_days: 30 });
     expect(ans.breakdown.dispatch_register).toBe(2);
   });
 

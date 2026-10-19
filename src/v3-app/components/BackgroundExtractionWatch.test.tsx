@@ -7,7 +7,7 @@ import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, act } from "@testing-library/react";
 import { installBackend } from "../test-utils";
-import { BackgroundExtractionWatch, nextDelay, POLL } from "./BackgroundExtractionWatch";
+import { BackgroundExtractionWatch, nextDelay, POLL, WORKER_READ_MS } from "./BackgroundExtractionWatch";
 
 const NOW = Date.parse("2026-10-16T10:00:00Z");
 const ORDER_ID = "ord-bg-1";
@@ -137,6 +137,80 @@ describe("BackgroundExtractionWatch", () => {
     expect(container.querySelector("[data-testid='bg-extraction-chunks']")!.textContent).toBe("2 of 5 chunks");
     await flush(3000);
     expect(reads).toHaveBeenCalledTimes(3);
+  });
+});
+
+// "Waiting for the background worker" did not say whether the worker was
+// running at all. The strip now says when it last ran, from cron_health via
+// the public /api/health probe, so a dead worker reads as down, not as slow.
+describe("BackgroundExtractionWatch: when the worker last ran", () => {
+  const health = (workers: any[], extra: any = {}) => ({ db_ok: true, integrations: [], cron: { configured: true, workers, ...extra } });
+  const at = (minutesAgo: number) => new Date(NOW - minutesAgo * 60_000).toISOString();
+  const workerText = (c: HTMLElement) => c.querySelector("[data-testid='bg-extraction-worker']")?.textContent ?? null;
+  const mountWith = async (healthFn: any) => {
+    reads = vi.fn(async () => inFlight({}, { status: "queued", created_at: at(20) }));
+    installBackend({ orders: { extractionStatus: reads }, health: healthFn });
+    onLanded = vi.fn();
+    const view = render(<BackgroundExtractionWatch orderId={ORDER_ID} onLanded={onLanded} />);
+    await flush(0);
+    return view;
+  };
+
+  it("says when the extraction worker last ran", async () => {
+    const { container } = await mountWith(vi.fn(async () => health([
+      { worker: "cron/tick", last_run_at: at(9), stale: false },
+      { worker: "extraction/jobs", last_run_at: at(2), stale: false },
+    ])));
+    expect(workerText(container)).toBe("The background worker last ran 2m ago.");
+  });
+
+  it("says the worker is late when the server marks its run stale", async () => {
+    const { container } = await mountWith(vi.fn(async () => health([
+      { worker: "extraction/jobs", last_run_at: at(95), stale: true },
+    ])));
+    expect(workerText(container)).toBe(
+      "The background worker last ran 1h ago. That is later than it should be, so this job waits until the worker runs again.");
+  });
+
+  it("falls back to the tick's run, and says so when there is no record at all", async () => {
+    const first = await mountWith(vi.fn(async () => health([{ worker: "cron/tick", last_run_at: at(4), stale: false }])));
+    expect(workerText(first.container)).toBe("The background worker last ran 4m ago.");
+    first.unmount();
+    const none = await mountWith(vi.fn(async () => health([{ worker: "cron/daily", last_run_at: at(60), stale: false }])));
+    expect(workerText(none.container)).toBe("There is no record of the background worker running, so this job waits until it does.");
+  });
+
+  it("says nothing about the worker when the probe could not read cron_health", async () => {
+    const { container } = await mountWith(vi.fn(async () => health([], { configured: false })));
+    expect(strip(container)).not.toBe(null);
+    expect(workerText(container)).toBe(null);
+  });
+
+  it("reads it again once a minute while the job waits", async () => {
+    const healthFn = vi.fn(async () => health([{ worker: "extraction/jobs", last_run_at: at(1), stale: false }]));
+    const { container } = await mountWith(healthFn);
+    expect(healthFn).toHaveBeenCalledTimes(1);
+    // The worker ran again just now; the next read shows the new time.
+    healthFn.mockImplementation(async () => health([{ worker: "extraction/jobs", last_run_at: new Date(Date.now()).toISOString(), stale: false }]));
+    await flush(WORKER_READ_MS);
+    expect(healthFn).toHaveBeenCalledTimes(2);
+    expect(workerText(container)).toBe("The background worker last ran 0m ago.");
+  });
+
+  it("stops reading it once the job has ended", async () => {
+    const healthFn = vi.fn(async () => health([{ worker: "extraction/jobs", last_run_at: at(1), stale: false }]));
+    let i = 0;
+    reads = vi.fn(async () => (++i < 4 ? inFlight() : ended("completed")));
+    installBackend({ orders: { extractionStatus: reads }, health: healthFn });
+    onLanded = vi.fn();
+    render(<BackgroundExtractionWatch orderId={ORDER_ID} onLanded={onLanded} />);
+    await flush(0);
+    // Reads at 0, 2000, 5000 and 9500 ms; the last one finds the job done.
+    await flush(10_000);
+    expect(onLanded).toHaveBeenCalledTimes(1);
+    expect(healthFn).toHaveBeenCalledTimes(1);
+    await flush(5 * WORKER_READ_MS);
+    expect(healthFn).toHaveBeenCalledTimes(1);
   });
 });
 

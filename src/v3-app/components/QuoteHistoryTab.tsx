@@ -17,6 +17,8 @@ const ACTION_LABEL: Record<string, string> = {
   quote_margin_override: "Margin override",
   quote_send_pdf_render_failed: "PDF render failed",
   quote_send_portal_token_failed: "Portal token failed",
+  quote_send_failed: "Send failed",
+  quote_send_status_update_failed: "Sent, status not updated",
   quote_status_draft: "Status > DRAFT",
   quote_status_pending_internal_approval: "Status > PENDING APPROVAL",
   quote_status_sent: "Status > SENT",
@@ -41,6 +43,8 @@ const TONE: Record<string, "info" | "good" | "bad" | "warn" | "ghost"> = {
   quote_auto_populate: "ghost",
   quote_send_pdf_render_failed: "bad",
   quote_send_portal_token_failed: "bad",
+  quote_send_failed: "bad",
+  quote_send_status_update_failed: "warn",
 };
 
 const detailFor = (e: any): string => {

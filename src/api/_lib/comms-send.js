@@ -35,6 +35,18 @@ const sendViaSendGrid = async ({ to, cc, bcc, replyTo, subject, body, from, atta
 };
 
 const sendViaChat = async (svc, tenantId, channel, { to, subject, body }) => {
+  // Teams outbound is not built: a Teams reply needs the service_url from the
+  // inbound activity, and this path never has it. It used to answer ok: true
+  // with status 202, so the row was marked sent and nothing left. It now says
+  // not configured, before the config lookup, so a Teams row never falls
+  // through to the email providers with a Teams address either.
+  if (channel === "teams") {
+    return {
+      provider: "teams", status: 0, ok: false, notConfigured: true,
+      detail: "Teams outbound is not available (a Teams reply needs the service_url from an inbound activity), so nothing was sent",
+    };
+  }
+
   const { data: config } = await svc.from("inbound_chat_configs")
     .select("*").eq("tenant_id", tenantId).eq("channel", channel).eq("active", true).maybeSingle();
   if (!config) return null;
@@ -77,10 +89,6 @@ const sendViaChat = async (svc, tenantId, channel, { to, subject, body }) => {
     }
   }
 
-  if (channel === "teams") {
-    return { provider: "teams", status: 202, ok: true, detail: "queued (Teams reply requires service_url from inbound activity)" };
-  }
-
   return null;
 };
 
@@ -99,10 +107,45 @@ const sendViaGenericWebhook = async ({ to, subject, body, from }) => {
   }
 };
 
+// Why a sendCommunication result did not go out, in words a screen can show.
+// Callers that send in the request (quotes/send, copilot confirm) report
+// this instead of a success when the row is not `sent`.
+export const notSentReason = (result) => {
+  if (!result || result.notFound) return "The message row could not be read back, so nothing was sent.";
+  if (result.error) return String(result.error);
+  // A provider that threw (for example an Outlook token refresh that failed)
+  // leaves no provider result, so `configured` reads false. Saying "no
+  // provider is configured" would then send the operator to set up a
+  // provider that is already connected. Report the failure itself.
+  if (result.lastError) return "The send failed: " + String(result.lastError);
+  if (result.configured === false) return "No provider is configured for this channel, so the message was not sent.";
+  return "The message was not sent (status " + (result.communication?.status || "unknown") + ").";
+};
+
+// A row the send core left `queued` (nothing took it), after the caller has
+// told the user it was not sent. Mark it failed with the reason. A queued
+// row is drained later by the agents/run reaper, which would then deliver a
+// message the user was told did not go, and a second time if they re-sent
+// it another way. Only a row that is still `queued` is touched. Returns the
+// row's final status, plus `error` when the update failed.
+export const failUnsentRow = async (svc, ctx, commId, result, reason) => {
+  const status = result?.communication?.status || null;
+  if (status !== "queued") return { status };
+  const upd = await svc.from("communications").update({
+    status: "failed",
+    updated_at: new Date().toISOString(),
+    metadata: { ...(result?.communication?.metadata || {}), not_sent_reason: reason },
+  }).eq("tenant_id", ctx.tenantId).eq("id", commId).eq("status", "queued");
+  if (upd?.error) return { status, error: upd.error.message };
+  return { status: "failed" };
+};
+
 // Send an existing communications draft row by id. Returns:
 //   { notFound: true }                              - no such row
 //   { idempotent: true, communication }             - already sent
-//   { communication, provider, configured, error }  - send attempted
+//   { communication, provider, configured, error, lastError }
+//                                                   - send attempted; lastError
+//                                                     is a provider that threw
 export const sendCommunication = async (svc, ctx, commId) => {
   const row = await svc.from("communications").select("*").eq("tenant_id", ctx.tenantId).eq("id", commId).single();
   if (row.error || !row.data) return { notFound: true };
@@ -186,14 +229,21 @@ export const sendCommunication = async (svc, ctx, commId) => {
     catch (err) { lastError = err.message; }
   }
 
-  const configured = !!providerResult;
-  const errorMsg = configured && !providerResult.ok ? "Provider " + providerResult.provider + " returned " + providerResult.status : null;
+  // A channel that answers notConfigured (Teams) sent nothing and cannot send
+  // on this path at all. It counts as not configured, and the row is failed,
+  // not queued: a queued row would come back to the reaper on every tick for a
+  // send that can never happen.
+  const notConfigured = !!providerResult?.notConfigured;
+  const configured = !!providerResult && !notConfigured;
+  const errorMsg = notConfigured
+    ? "not_configured: " + providerResult.detail
+    : (configured && !providerResult.ok ? "Provider " + providerResult.provider + " returned " + providerResult.status : null);
   // NOT "sent". With no provider configured nothing was transmitted, so
   // recording `sent` (and stamping sent_at) was a lie — and any analytics built
   // on status='sent' would have been measuring fiction. `queued` is honest: the
   // row is ready and a human or a later provider can pick it up. The parallel
   // reaper in agents/run.js:337-341 was already fixed for exactly this bug.
-  const newStatus = !configured ? "queued" : (providerResult.ok ? "sent" : "failed");
+  const newStatus = notConfigured ? "failed" : (!configured ? "queued" : (providerResult.ok ? "sent" : "failed"));
 
   const update = {
     status: newStatus,
@@ -232,5 +282,5 @@ export const sendCommunication = async (svc, ctx, commId) => {
     objectId: commId,
   });
 
-  return { communication: updated.data, provider: providerResult?.provider || "manual", configured, error: errorMsg };
+  return { communication: updated.data, provider: providerResult?.provider || "manual", configured, error: errorMsg, lastError };
 };

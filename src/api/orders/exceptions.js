@@ -19,6 +19,7 @@ import { resolveContext, requirePermission, hasPermission } from "../_lib/auth.j
 import { serviceClient } from "../_lib/supabase.js";
 import { readTermsSettings, readTermsView } from "../_lib/terms/check.js";
 import { buildOrderExceptions } from "../_lib/order-exceptions.js";
+import { IN_FLIGHT_JOB_STATUSES } from "../_lib/extraction-job-status.js";
 import { wantsShadow } from "./terms.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -38,6 +39,15 @@ const readRun = async (svc, tenantId, runId) => {
   const r = await svc.from("extraction_runs").select(RUN_COLUMNS)
     .eq("tenant_id", tenantId).eq("id", runId).maybeSingle();
   return r.error ? null : r.data || null;
+};
+
+// The order's newest background extraction job still in flight (plan C-2).
+// Advisory like the run: a read error leaves the row out.
+const readInFlightJob = async (svc, tenantId, orderId) => {
+  const r = await svc.from("extraction_jobs").select("id, status, created_at")
+    .eq("tenant_id", tenantId).eq("order_id", orderId).in("status", IN_FLIGHT_JOB_STATUSES)
+    .order("created_at", { ascending: false }).limit(1);
+  return r.error ? null : (r.data || [])[0] || null;
 };
 
 // The customer's master record and the vendor codes it uses for us, for the
@@ -92,15 +102,16 @@ export default async function handler(req, res) {
     if (!o.data) return json(res, 404, { error: { message: "Order not found" } });
     const order = o.data;
 
-    const [{ customer, vendorCodes }, extractionRun, terms] = await Promise.all([
+    const [{ customer, vendorCodes }, extractionRun, extractionJob, terms] = await Promise.all([
       readCustomer(svc, ctx.tenantId, order.customer_id),
       readRun(svc, ctx.tenantId, order.preflight_payload?.extraction_run_id),
+      readInFlightJob(svc, ctx.tenantId, orderId),
       readTerms(svc, ctx, orderId, includeShadow),
     ]);
 
     // Exactly what the workspace renders, versioned (EXCEPTIONS_VERSION), so
     // an agent reading this and a person reading the screen see one queue.
-    const out = buildOrderExceptions({ order, customer, vendorCodes, extractionRun, terms: terms.view, termsPolicy: terms.policy });
+    const out = buildOrderExceptions({ order, customer, vendorCodes, extractionRun, extractionJob, terms: terms.view, termsPolicy: terms.policy });
     return json(res, 200, out);
   } catch (err) {
     sendError(res, err);

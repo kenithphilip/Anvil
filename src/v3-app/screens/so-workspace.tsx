@@ -14,7 +14,7 @@ import type { AttachedQuote } from "../components/QuotesStrip";
 import { QuotePane } from "../components/QuotePane";
 // The gate's own predicate, not a copy: a UI that disagreed with the server
 // about what blocks would offer a button that 409s, or hide the only way out.
-import { isUnresolvedBlocker as isBlockingFinding } from "../../api/_lib/blocking-findings.js";
+import { isUnresolvedBlocker as isBlockingFinding, LINES_CHANGED_CODE } from "../../api/_lib/blocking-findings.js";
 // Pure, no I/O — imported rather than twinned, so the rupee figure an approver
 // reads is computed by the same code the server would use.
 import { deviationValue, currencyOf } from "../../api/_lib/deviation-value.js";
@@ -2099,6 +2099,13 @@ const WiredSOWorkspace = () => {
     if (action.href) { window.location.hash = action.href; return; }
     if (action.control === "run_validation") { runValidation(); return; }
     if (action.control === "change_customer") { setIdentityOpen(true); return; }
+    // Plan C-2: the lines a late background extraction held go into the grid
+    // as unsaved edits. Save line edits writes them; nothing is saved here.
+    if (action.control === "use_pending_lines") {
+      const held = findings.find((f: any) => f?.code === LINES_CHANGED_CODE && f.resolved !== true);
+      if (Array.isArray(held?.pending_lines)) { setLinesDraft(held.pending_lines); setLinesOpenChoice(true); }
+      return;
+    }
     if (action.tab && action.tab !== tab) setTab(action.tab);
     if (action.target && action.target.startsWith("lines[")) {
       const i = Number(action.target.slice("lines[".length, -1));
@@ -2115,6 +2122,7 @@ const WiredSOWorkspace = () => {
 
   // Why an exception's control cannot run now. Mirrors the header button.
   const exceptionDisabledReason = (action: ExceptionAction | null): string | null => {
+    if (action?.control === "use_pending_lines") return canEditLines ? null : "The lines of this order cannot change here";
     if (action?.control !== "run_validation") return null;
     if (!canWrite) return "Needs write permission";
     if (busy) return "Another action is running";

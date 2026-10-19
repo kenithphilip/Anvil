@@ -59,9 +59,9 @@ Every row's type is in `EXCEPTION_TYPES`. A type ending in `:*` is a family; the
 | Source | Types |
 |---|---|
 | reconciliation (the quote check) | `line_price_mismatch`, `line_qty_mismatch`, `line_description_mismatch`, `line_unmatched`, `line_reconcile_other`, `payment_terms_mismatch`, `incoterm_mismatch`, `incoterm_place_differs`, `incoterm_unconfirmed`, `quoted_not_ordered` |
-| finding (`orders.rule_findings`) | `mod_bom_pending`, `line_count_shortfall`, `blocking_finding`, `finding:<code>` |
+| finding (`orders.rule_findings`) | `mod_bom_pending`, `line_count_shortfall`, `lines_changed_after_review`, `blocking_finding`, `finding:<code>` |
 | anomaly (the rule library) | `anomaly:<rule>`, `anomaly_check_not_run` |
-| extraction (the run) | `extraction_no_lines`, `extraction_failed`, `extraction_low_confidence`, `extraction_fallback_parse`, `extraction_check:<code>` |
+| extraction (the run and the background job) | `extraction_in_flight`, `extraction_no_lines`, `extraction_failed`, `extraction_low_confidence`, `extraction_fallback_parse`, `extraction_check:<code>` |
 | terms (the terms check) | `terms_flag`, `terms_not_read` |
 | customer (the match) | `customer_unmatched`, `customer_gstin_conflict`, `customer_low_confidence`, `customer_state_differs` |
 | delivery_date (plan PR 10) | `delivery_date_conflict`, one row per rule: `committed_after_po_date`, `line_differs_from_header`, `date_in_past` |
@@ -77,7 +77,7 @@ A terms flag that was already decided closes the reconcile's copy of the same cl
 
 ## 4. Resolution options
 
-The vocabulary: `accept_po_value`, `accept_quote_value`, `request_amendment`, `reject_line`, `reject_term`, `not_a_deviation`, `set_value`, `map_item`, `add_line`, `run_check`, `confirm`, `change_customer`, `update_master`.
+The vocabulary: `accept_po_value`, `accept_quote_value`, `request_amendment`, `reject_line`, `reject_term`, `not_a_deviation`, `set_value`, `map_item`, `add_line`, `run_check`, `confirm`, `change_customer`, `update_master`, `use_new_lines`, `cancel_extraction`.
 
 Each option names how it is applied today:
 
@@ -94,6 +94,8 @@ Each option names how it is applied today:
 | `incoterm_*` | `accept_po_value` (not yet), `set_value` (PATCH `incoterm_code`), `request_amendment` (not yet) |
 | `quoted_not_ordered` | `add_line` (PATCH with a quote_variance line), `request_amendment`, `confirm` (not yet) |
 | `mod_bom_pending`, `line_count_shortfall`, `blocking_finding` | `confirm` (PATCH `resolve_finding`, approve permission), `run_check` (POST `/api/docai/extract`) |
+| `lines_changed_after_review` | `use_new_lines` (PATCH the lines from the finding's `pending_lines`), `confirm` (PATCH `resolve_finding`, approve permission). The background writeback raises it when it lands on an order past DRAFT (plan C-2). It holds the new lines and blocks approve and push. |
+| `extraction_in_flight` | `cancel_extraction` (PATCH `/api/orders/extraction_jobs/{job_id}`, API only; refused once the job is merging). It blocks `send` while a background job is queued or running. |
 | `anomaly:*` | `confirm` (not yet), `set_value`, `run_check` (POST `/api/anomaly/compute`) |
 | `anomaly_check_not_run` | `run_check` (POST `/api/anomaly/compute`, then PATCH `rule_findings`) |
 | `extraction_*` | `run_check` (POST `/api/docai/extract`), `confirm` (not yet), `set_value` where a line is named |

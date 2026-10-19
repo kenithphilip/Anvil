@@ -42,6 +42,13 @@ export default async function handler(req, res) {
       if (TERMINAL_STATUSES.has(existing.data.status)) {
         return json(res, 409, { error: { message: "job already in terminal status " + existing.data.status } });
       }
+      // A merging job is writing its result to the order now. A cancel then
+      // would say "cancelled" over lines that are already written.
+      // shortcut: a job stuck in merging cannot be cancelled here (the worker
+      // retries it when its lease ends), upgrade if a stuck merge is seen.
+      if (existing.data.status === "merging") {
+        return json(res, 409, { error: { code: "JOB_WRITING", message: "The job is writing its result to the order and can no longer be cancelled." } });
+      }
       const patch = {};
       if (body.action === "cancel") {
         patch.status = "cancelled";
@@ -50,13 +57,17 @@ export default async function handler(req, res) {
       } else {
         return json(res, 400, { error: { message: "unsupported action; only 'cancel' is supported" } });
       }
+      // Compare-and-set on the status read above: the worker may have moved
+      // the job on (to merging) since.
       const upd = await svc.from("extraction_jobs")
         .update(patch)
         .eq("tenant_id", ctx.tenantId)
         .eq("id", id)
+        .eq("status", existing.data.status)
         .select("*")
-        .single();
+        .maybeSingle();
       if (upd.error) throw new Error(upd.error.message);
+      if (!upd.data) return json(res, 409, { error: { code: "JOB_MOVED", message: "The job changed while it was being cancelled. Reload and try again." } });
       await recordAudit(ctx, {
         action: "extraction_job_" + body.action,
         objectType: "extraction_job",

@@ -5,9 +5,10 @@
 // large-PO job replaces a page-1 preview with the full line set. Neither
 // wrote orders.payload_hash, so an approver who loaded the order before
 // either write approved lines they had not seen. Both now move it when the
-// lines changed, and leave it when they did not. When either changes an
-// APPROVED order's lines, the approval is cleared in the same write, as an
-// edit in the PATCH clears it.
+// lines changed, and leave it when they did not. When the reconcile changes
+// an APPROVED order's lines, the approval is cleared in the same write, as an
+// edit in the PATCH clears it. The writeback changes lines only on a DRAFT
+// (plan C-2); on a reviewed order it holds them and clears the approval.
 //
 // Every value is invented.
 
@@ -232,9 +233,11 @@ describe("the background writeback", () => {
     expect(done.status).toBe("completed");
   };
 
+  // The writeback replaces lines only on a DRAFT (plan C-2,
+  // api-extraction-writeback-guard.test.js), so these orders are drafts.
   it("moves the hash when it replaces the page-1 preview's lines", async () => {
-    // The approver loaded the page-1 preview: one line.
-    seed(inReview(LINES_WITH_HSN.slice(0, 1)));
+    // Someone loaded the page-1 preview: one line.
+    seed(inReview(LINES_WITH_HSN.slice(0, 1), { status: "DRAFT" }));
     const seen = row().payload_hash;
 
     await runJob(job("job-1", LINES_WITH_HSN));
@@ -242,13 +245,15 @@ describe("the background writeback", () => {
     expect(row().payload_hash).not.toBe(seen);
     expect(row().payload_hash).toBe(computeOrderPayloadHash(row()));
 
+    // Sent for review, an approve with the preview's hash is stale.
+    row().status = "PENDING_REVIEW";
     const stale = await approve(seen);
     expect(stale._status).toBe(409);
     expect(stale._json.error.code).toBe("STALE_APPROVAL");
   });
 
   it("leaves the hash when it writes the same lines again", async () => {
-    seed(inReview(LINES_WITH_HSN.slice(0, 1)));
+    seed(inReview(LINES_WITH_HSN.slice(0, 1), { status: "DRAFT" }));
     await runJob(job("job-1", LINES_WITH_HSN));
     const settled = row().payload_hash;
     H.writes = [];
@@ -258,17 +263,20 @@ describe("the background writeback", () => {
     expect(orderWrites().some((w) => "payload_hash" in w.patch)).toBe(false);
   });
 
-  it("clears the approval of an approved order whose lines it replaces", async () => {
+  it("leaves the hash of an approved order whose new lines it holds, and clears the approval", async () => {
     seed(inReview(LINES_WITH_HSN.slice(0, 1)));
     approveInPlace();
+    const approved = row().payload_hash;
 
     await runJob(job("job-1", LINES_WITH_HSN));
-    expect(row().result.salesOrder.lineItems).toHaveLength(2);
-    expect(row()).toMatchObject({ status: "APPROVED", approval: null, approval_expires_at: null, approval_actions: [] });
+    // The approved line stays, so the hash describes it still.
+    expect(row().result.salesOrder.lineItems).toHaveLength(1);
+    expect(row().payload_hash).toBe(approved);
+    expect(row()).toMatchObject({ status: "DRAFT", approval: null, approval_expires_at: null, approval_actions: [] });
   });
 
   it("keeps the approval when it writes the lines the approver approved", async () => {
-    seed(inReview(LINES_WITH_HSN.slice(0, 1)));
+    seed(inReview(LINES_WITH_HSN.slice(0, 1), { status: "DRAFT" }));
     await runJob(job("job-1", LINES_WITH_HSN));
     const approval = approveInPlace();
 

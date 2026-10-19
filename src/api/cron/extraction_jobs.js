@@ -40,7 +40,10 @@ import { extractTextLayer } from "../_lib/docai/text_layer.js";
 import { planDensityChunking } from "../_lib/docai/density-plan.js";
 import { buildWindowBodyText } from "../_lib/docai/text-row-chunker.js";
 import { autoReconcileOrder } from "../_lib/order-reconcile.js";
-import { payloadHashAfterWrite, approvalClearedByContentChange } from "../_lib/payload-hash.js";
+import { payloadHashAfterWrite, approvalClearedByContentChange, computeOrderPayloadHash } from "../_lib/payload-hash.js";
+import { mapLinesToItemMaster } from "../_lib/item-mapper.js";
+import { approvalClearedByReturn } from "../_lib/order-status-actions.js";
+import { isUnresolvedBlocker, LINES_CHANGED_CODE } from "../_lib/blocking-findings.js";
 
 // Real tenant settings, cached for the life of one tick.
 //
@@ -311,9 +314,13 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
         keep_pages: keepPages || null,
         lease_until: new Date(Date.now() + LEASE_TTL_MS).toISOString(),
       })
-      .eq("id", job.id)
-      .select("*").single();
+      // Compare-and-set on the status this tick read, at every stage: an
+      // operator cancel that landed while the tick worked is kept, not
+      // overwritten by the next stage (and then written into the order).
+      .eq("id", job.id).eq("status", job.status)
+      .select("*").maybeSingle();
     if (upd.error) throw new Error("job update (profile): " + upd.error.message);
+    if (!upd.data) return { job, hasMore: false };
     return { job: upd.data, hasMore: true };
   }
 
@@ -410,9 +417,10 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
         ...(rowPin ? { partial_result: { ...(job.partial_result || {}), row_plan: rowPin } } : {}),
         lease_until: new Date(Date.now() + LEASE_TTL_MS).toISOString(),
       })
-      .eq("id", job.id)
-      .select("*").single();
+      .eq("id", job.id).eq("status", job.status)
+      .select("*").maybeSingle();
     if (upd.error) throw new Error("job update (chunk): " + upd.error.message);
+    if (!upd.data) return { job, hasMore: false };
     return { job: upd.data, hasMore: true };
   }
 
@@ -424,8 +432,9 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
       // No pending chunks; advance to merge.
       const upd = await svc.from("extraction_jobs")
         .update({ status: "merging", lease_until: new Date(Date.now() + LEASE_TTL_MS).toISOString() })
-        .eq("id", job.id).select("*").single();
+        .eq("id", job.id).eq("status", job.status).select("*").maybeSingle();
       if (upd.error) throw new Error("job update (extract->merge): " + upd.error.message);
+      if (!upd.data) return { job, hasMore: false };
       return { job: upd.data, hasMore: true };
     }
     const chunkMeta = list[idx];
@@ -565,8 +574,9 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
         status: nextStatus,
         lease_until: new Date(Date.now() + LEASE_TTL_MS).toISOString(),
       })
-      .eq("id", job.id).select("*").single();
+      .eq("id", job.id).eq("status", job.status).select("*").maybeSingle();
     if (upd.error) throw new Error("job update (chunk done): " + upd.error.message);
+    if (!upd.data) return { job, hasMore: false };
     return { job: upd.data, hasMore: true };
   }
 
@@ -780,47 +790,119 @@ const advanceJob = async (svc, job, settingsCache = new Map()) => {
     // only for a writeback that happened.
     let wroteOrderLines = false;
     if (orderId && PO_SHAPED.has(jobKind) && !classifiedNonPo) {
-      // customer_id, po_number, payload_hash and approval are read for the
-      // approval hash below; result and preflight_payload are merged into.
-      const ord = await svc.from("orders").select("result, preflight_payload, customer_id, po_number, payload_hash, approval").eq("tenant_id", job.tenant_id).eq("id", orderId).maybeSingle();
+      // status decides what the write may do (plan C-2), and updated_at makes
+      // it compare-and-set. customer_id, po_number, payload_hash and approval
+      // are read for the approval hash; result, preflight_payload and
+      // rule_findings are merged into.
+      const readOrder = () => svc.from("orders")
+        .select("status, updated_at, result, preflight_payload, rule_findings, customer_id, po_number, payload_hash, approval")
+        .eq("tenant_id", job.tenant_id).eq("id", orderId).maybeSingle();
+      let ord = await readOrder();
       if (ord.error) throw new Error("order read (merge): " + ord.error.message);
-      const nextResult = { ...(ord.data?.result || {}) };
-      nextResult.salesOrder = {
-        ...(nextResult.salesOrder || {}),
-        lineItems: mergedLines,
-        customer: mergedNorm.customer || nextResult.salesOrder?.customer || null,
-      };
-      const nextPreflight = {
-        ...(ord.data?.preflight_payload || {}),
-        adapter_used: merged.adapter_used || null,
-        confidence_overall: merged.confidence_overall || null,
-        last_extracted_at: new Date().toISOString(),
-        extraction_job_id: job.id,
-      };
-      // New lines are a new document to approve: the approval hash moves when
-      // they differ from the order's, so an approver who loaded the page-1
-      // preview is refused as stale. The same lines leave it.
-      const stamp = payloadHashAfterWrite(ord.data, { ...(ord.data || {}), result: nextResult });
-      // New lines on an approved order take its approval away, as an edit in
-      // the PATCH does, so they are not pushed unapproved. Plan C-2 decides
-      // what else happens to a reviewed order's lines.
-      const approvalCleared = approvalClearedByContentChange(ord.data, { ...(ord.data || {}), result: nextResult });
-      const wb = await svc.from("orders")
-        .update({ result: nextResult, preflight_payload: nextPreflight, ...(stamp ? { payload_hash: stamp } : {}), ...(approvalCleared || {}) })
-        .eq("tenant_id", job.tenant_id).eq("id", orderId);
-      if (wb.error) {
+      // The item-master map the order create runs. Best-effort: a failed map
+      // keeps the lines as they were read.
+      let lines = mergedLines;
+      try {
+        const mapped = await mapLinesToItemMaster(svc, job.tenant_id, ord.data?.customer_id || job.customer_id || null, mergedLines);
+        if (Array.isArray(mapped) && mapped.length === mergedLines.length) lines = mapped;
+      } catch { /* the unmapped lines stand */ }
+      let writeError = null;
+      let held = null;
+      // A save or a cancel that lands between the read and the write leaves 0
+      // rows. The rule is then applied once more, to the order as it now is.
+      for (let attempt = 1; ord.data; attempt++) {
+        const o = ord.data;
+        held = null;
+        // A cancelled order is never written to.
+        if (o.status === "CANCELLED") break;
+        const now = new Date().toISOString();
+        const nextResult = { ...(o.result || {}) };
+        nextResult.salesOrder = {
+          ...(nextResult.salesOrder || {}),
+          lineItems: lines,
+          customer: mergedNorm.customer || nextResult.salesOrder?.customer || null,
+        };
+        const after = { ...o, result: nextResult };
+        let patch;
+        if (o.status === "DRAFT") {
+          // New lines are a new document to approve: the approval hash moves
+          // when they differ from the order's, so an approver who loaded the
+          // page-1 preview is refused as stale. The same lines leave it.
+          const stamp = payloadHashAfterWrite(o, after);
+          const approvalCleared = approvalClearedByContentChange(o, after);
+          patch = {
+            result: nextResult,
+            preflight_payload: {
+              ...(o.preflight_payload || {}),
+              adapter_used: merged.adapter_used || null,
+              confidence_overall: merged.confidence_overall || null,
+              last_extracted_at: now,
+              extraction_job_id: job.id,
+            },
+            ...(stamp ? { payload_hash: stamp } : {}),
+            ...(approvalCleared || {}),
+          };
+        } else {
+          // Past DRAFT a person reviewed these lines, so they are never
+          // replaced. The same lines need nothing.
+          if (computeOrderPayloadHash(o) === computeOrderPayloadHash(after)) break;
+          const keptCount = Array.isArray(o.result?.salesOrder?.lineItems) ? o.result.salesOrder.lineItems.length : 0;
+          const detail = "The full extraction finished while the order was " + String(o.status || "unknown").toLowerCase().replace(/_/g, " ")
+            + ". It read " + lines.length + " lines. The order keeps its " + keptCount + " lines. The new lines are held on this finding and are not applied.";
+          const findings = Array.isArray(o.rule_findings) ? o.rule_findings : [];
+          // C-D1: an order in review or approved goes back to DRAFT, and the
+          // banner shows why. A later status keeps its status and approval.
+          const back = o.status === "PENDING_REVIEW" || o.status === "APPROVED";
+          held = { from_status: o.status, line_count: lines.length, kept_count: keptCount };
+          patch = {
+            // One held replacement at a time: the newest replaces an open one.
+            rule_findings: [...findings.filter((f) => !(isUnresolvedBlocker(f) && f.code === LINES_CHANGED_CODE)), {
+              code: LINES_CHANGED_CODE, rule_id: LINES_CHANGED_CODE, severity: "ERROR",
+              // A blocker refuses approve and push until an approver resolves
+              // it. Source "extraction" makes a routine rule_findings
+              // overwrite carry it forward (mergeBlockersForward).
+              blocks: true, resolved: false, source: "extraction", line_index: null,
+              detail,
+              suggested_fix: "To use the new lines, select Load the new lines in Needs decision, check them, and save the line edits. An approver then resolves this finding.",
+              from_status: o.status, extraction_job_id: job.id, held_at: now,
+              pending_lines: lines, pending_customer: mergedNorm.customer || null,
+            }],
+            ...(back ? {
+              status: "DRAFT",
+              correction_reason: detail + " Check the lines, then send the order for review again.",
+              correction_requested_by: "background extraction",
+              correction_requested_at: now,
+              ...(approvalClearedByReturn(o, { status: "DRAFT" }) || {}),
+            } : {}),
+          };
+        }
+        let write = svc.from("orders").update(patch).eq("tenant_id", job.tenant_id).eq("id", orderId);
+        if (o.updated_at) write = write.eq("updated_at", o.updated_at);
+        const wb = await write.select("id");
+        if (wb.error) { writeError = wb.error.message; break; }
+        if (!(Array.isArray(wb.data) && wb.data.length === 0)) { wroteOrderLines = !held; break; }
+        if (attempt === 2) { writeError = "the order changed twice while the job wrote it"; break; }
+        ord = await readOrder();
+        if (ord.error) throw new Error("order read (merge): " + ord.error.message);
+      }
+      if (writeError) {
         // Do NOT swallow a writeback failure into 'completed' — that strands the
         // order with un-written lines while the job claims success. Fail the job
         // (extraction result preserved in job.result for recovery) so it is
         // visible instead of silently wrong.
         const f = await svc.from("extraction_jobs")
-          .update({ status: "failed", result: merged, last_error: "order writeback failed: " + wb.error.message, completed_at: new Date().toISOString(), lease_until: null })
+          .update({ status: "failed", result: merged, last_error: "order writeback failed: " + writeError, completed_at: new Date().toISOString(), lease_until: null })
           .eq("id", job.id).eq("status", "merging").select("*").maybeSingle();
         if (f.error) throw new Error("job update (writeback-fail): " + f.error.message);
-        await emit(svc, tenantCtx, "docai_extract_failed", { job_id: job.id, order_id: orderId, error: "writeback: " + wb.error.message });
+        await emit(svc, tenantCtx, "docai_extract_failed", { job_id: job.id, order_id: orderId, error: "writeback: " + writeError });
         return { job: (f.data || job), hasMore: false };
       }
-      wroteOrderLines = true;
+      if (held) {
+        await recordAudit(tenantCtx, {
+          action: "order_lines_held_after_review", objectType: "order", objectId: orderId,
+          after: { extraction_job_id: job.id, ...held },
+        });
+      }
     }
     // TELL extraction_runs WHAT ACTUALLY CAME OUT.
     //

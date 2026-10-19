@@ -8,7 +8,7 @@
 // but is actually Atom-with-JSON-payloads in places. We always
 // request JSON ($format=json) and let SData wrap it.
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { oauth2ClientCredentials, oauth2Evict } from "./oauth2.js";
 import { safeFetch } from "./safe-fetch.js";
 
@@ -16,7 +16,7 @@ export const sagex3DecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol, plainCol) => {
-    if (s[encCol] && s.sagex3_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.sagex3_creds_iv); }
       catch (_e) { return s[plainCol] || null; }
     }
@@ -28,20 +28,11 @@ export const sagex3DecryptCreds = (s) => {
 };
 
 export const sagex3EncryptCreds = ({ client_id, client_secret }) => {
-  if (!isSecretsConfigured()) {
-    return {
-      sagex3_client_id: client_id,
-      sagex3_client_id_enc: null,
-      sagex3_client_secret_enc: null,
-      sagex3_creds_iv: null,
-    };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
     sagex3_client_id: null,
-    sagex3_client_id_enc: encryptField(client_id, iv),
-    sagex3_client_secret_enc: encryptField(client_secret, iv),
-    sagex3_creds_iv: iv,
+    sagex3_client_id_enc: encryptField(client_id),
+    sagex3_client_secret_enc: encryptField(client_secret),
   };
 };
 

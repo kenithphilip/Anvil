@@ -9,14 +9,14 @@
 // Auth: HTTP Basic with username:password. Sessions are stateless;
 // no token caching needed.
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { safeFetch } from "./safe-fetch.js";
 
 export const eclipseDecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol, plainCol) => {
-    if (s[encCol] && s.eclipse_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.eclipse_creds_iv); }
       catch (_e) { return s[plainCol] || null; }
     }
@@ -28,15 +28,11 @@ export const eclipseDecryptCreds = (s) => {
 };
 
 export const eclipseEncryptCreds = ({ username, password }) => {
-  if (!isSecretsConfigured()) {
-    return { eclipse_username: username, eclipse_username_enc: null, eclipse_password_enc: null, eclipse_creds_iv: null };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
     eclipse_username: null,
-    eclipse_username_enc: encryptField(username, iv),
-    eclipse_password_enc: encryptField(password, iv),
-    eclipse_creds_iv: iv,
+    eclipse_username_enc: encryptField(username),
+    eclipse_password_enc: encryptField(password),
   };
 };
 

@@ -3,7 +3,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { safeFetch } from "../_lib/safe-fetch.js";
-import { tallyResolveCompany, tallyDecryptToken } from "../_lib/tally-client.js";
+import { tallyResolveCompany, tallyDecryptToken, tallyBridgeEndpoint } from "../_lib/tally-client.js";
 
 const cleanName = (s) => String(s || "").trim().toLowerCase();
 
@@ -57,25 +57,19 @@ const validateMasters = async (svc, tenantId, so) => {
 
 // Phase F.6 fix: route the dry-run XML through the same per-tenant
 // company resolver the push path uses, so multi-company tenants
-// don't get pinned to whatever TALLY_BRIDGE_URL points at. Falls
-// back to env when no company resolves (single-company dev).
+// don't get pinned to whatever TALLY_BRIDGE_URL points at. The
+// resolver already applies the env bridge where it serves this
+// tenant; the URL and token always come from the one company.
 const tryRemoteDryRun = async (svc, tenantId, xml, companyId) => {
   if (!xml) return { skipped: true, reason: "no_xml" };
-  let bridgeUrl = null;
-  let bridgeHeaders = { "Content-Type": "text/xml" };
+  let company = null;
+  try { company = await tallyResolveCompany(svc, tenantId, companyId); } catch (_e) { company = null; }
+  if (!company?.bridge_url) return { skipped: true, reason: "not_configured" };
+  const bridgeHeaders = { "Content-Type": "text/xml" };
+  const tok = tallyDecryptToken(company);
+  if (tok) bridgeHeaders.Authorization = "Bearer " + tok;
   try {
-    const company = await tallyResolveCompany(svc, tenantId, companyId);
-    bridgeUrl = company?.bridge_url || process.env.TALLY_BRIDGE_URL || null;
-    const tok = tallyDecryptToken(company);
-    if (tok) bridgeHeaders.Authorization = "Bearer " + tok;
-    else if (process.env.TALLY_BRIDGE_TOKEN) bridgeHeaders.Authorization = "Bearer " + process.env.TALLY_BRIDGE_TOKEN;
-  } catch (_e) {
-    bridgeUrl = process.env.TALLY_BRIDGE_URL || null;
-    if (process.env.TALLY_BRIDGE_TOKEN) bridgeHeaders.Authorization = "Bearer " + process.env.TALLY_BRIDGE_TOKEN;
-  }
-  if (!bridgeUrl) return { skipped: true, reason: "not_configured" };
-  try {
-    const resp = await safeFetch(bridgeUrl, { method: "POST", headers: bridgeHeaders, body: xml });
+    const resp = await safeFetch(tallyBridgeEndpoint(company), { method: "POST", headers: bridgeHeaders, body: xml });
     const text = await resp.text();
     return { status: resp.status, body: text.slice(0, 4000) };
   } catch (err) {

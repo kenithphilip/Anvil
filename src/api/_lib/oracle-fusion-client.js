@@ -19,7 +19,7 @@
 // records. Our payload is per-order so this is a hard ceiling, not a
 // throttle.
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { oauth2ClientCredentials, oauth2Evict } from "./oauth2.js";
 import { safeFetch } from "./safe-fetch.js";
 
@@ -27,7 +27,7 @@ export const oracleFusionDecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol, plainCol) => {
-    if (s[encCol] && s.oracle_fusion_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.oracle_fusion_creds_iv); }
       catch (_e) { return s[plainCol] || null; }
     }
@@ -39,20 +39,11 @@ export const oracleFusionDecryptCreds = (s) => {
 };
 
 export const oracleFusionEncryptCreds = ({ client_id, client_secret }) => {
-  if (!isSecretsConfigured()) {
-    return {
-      oracle_fusion_client_id: client_id,
-      oracle_fusion_client_id_enc: null,
-      oracle_fusion_client_secret_enc: null,
-      oracle_fusion_creds_iv: null,
-    };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
     oracle_fusion_client_id: null,
-    oracle_fusion_client_id_enc: encryptField(client_id, iv),
-    oracle_fusion_client_secret_enc: encryptField(client_secret, iv),
-    oracle_fusion_creds_iv: iv,
+    oracle_fusion_client_id_enc: encryptField(client_id),
+    oracle_fusion_client_secret_enc: encryptField(client_secret),
   };
 };
 

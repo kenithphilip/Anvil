@@ -13,7 +13,7 @@
 // Network errors and 4xx responses raise; the caller is responsible
 // for retry queueing (cron) and per-tenant audit.
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { safeFetch } from "./safe-fetch.js";
 
 // ── creds helpers ─────────────────────────────────────────────────
@@ -21,7 +21,7 @@ export const plmDecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol, plainCol) => {
-    if (s[encCol] && s.creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.creds_iv); }
       catch (_e) { return s[plainCol] || null; }
     }
@@ -34,24 +34,13 @@ export const plmDecryptCreds = (s) => {
 };
 
 export const plmEncryptCreds = ({ username, password, apiKey }) => {
-  if (!isSecretsConfigured()) {
-    return {
-      username: username || null,
-      username_enc: null,
-      password_enc: null,
-      api_key: apiKey || null,
-      api_key_enc: null,
-      creds_iv: null,
-    };
-  }
-  const iv = newIv();
+  if (username || password || apiKey) requireSecretsConfigured();
   return {
     username: null,
-    username_enc: username ? encryptField(username, iv) : null,
-    password_enc: password ? encryptField(password, iv) : null,
+    username_enc: username ? encryptField(username) : null,
+    password_enc: password ? encryptField(password) : null,
     api_key: null,
-    api_key_enc: apiKey ? encryptField(apiKey, iv) : null,
-    creds_iv: iv,
+    api_key_enc: apiKey ? encryptField(apiKey) : null,
   };
 };
 

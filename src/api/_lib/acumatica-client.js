@@ -15,7 +15,7 @@
 //
 // Filtering uses OData $filter; cursoring on LastModifiedDateTime.
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { safeFetch } from "./safe-fetch.js";
 
 const sessionCache = new Map();
@@ -25,7 +25,7 @@ export const acuDecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol, plainCol) => {
-    if (s[encCol] && s.acumatica_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.acumatica_creds_iv); }
       catch (_e) { return s[plainCol] || null; }
     }
@@ -37,15 +37,11 @@ export const acuDecryptCreds = (s) => {
 };
 
 export const acuEncryptCreds = ({ username, password }) => {
-  if (!isSecretsConfigured()) {
-    return { acumatica_username: username, acumatica_username_enc: null, acumatica_password_enc: null, acumatica_creds_iv: null };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
     acumatica_username: null,
-    acumatica_username_enc: encryptField(username, iv),
-    acumatica_password_enc: encryptField(password, iv),
-    acumatica_creds_iv: iv,
+    acumatica_username_enc: encryptField(username),
+    acumatica_password_enc: encryptField(password),
   };
 };
 

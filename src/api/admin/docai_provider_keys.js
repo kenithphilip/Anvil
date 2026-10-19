@@ -3,16 +3,16 @@
 //
 // Issue #210: the per-tenant DocAI-provider key write-path. Every provider key
 // (Gemini / Mistral / Reducto / Unstructured / Docling / Marker / LlamaCloud +
-// the GST registry) is encrypted with the SHARED docai_creds_iv envelope the
-// adapters already read, so BYOK works uniformly. Keys are never returned or
-// logged — only a boolean "is it set". Admin-only.
+// the GST registry) is encrypted into the _enc column its adapter reads, so
+// BYOK works uniformly. Keys are never returned or logged — only a boolean
+// "is it set". Admin-only.
 
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { tenantSettings, updateTenantSettings } from "../_lib/stripe-client.js";
-import { encryptField, newIv, isSecretsConfigured, IV_LEN } from "../_lib/secrets.js";
+import { encryptField, isSecretsConfigured } from "../_lib/secrets.js";
 import { ADAPTER_NAMES } from "../_lib/docai/index.js";
 
 // Provider registry. `external` + `region` drive the residency warning in the
@@ -30,28 +30,19 @@ export const DOCAI_PROVIDERS = [
 ];
 const BY_ID = new Map(DOCAI_PROVIDERS.map((p) => [p.id, p]));
 
-// Coerce a stored IV (bytea comes back as a Buffer or a '\x…' hex string) to a
-// Buffer so encryptField can reuse it — reusing the existing IV keeps any keys
-// already stored under it decryptable.
-const toIvBuffer = (v) => {
-  if (!v) return null;
-  if (Buffer.isBuffer(v)) return v;
-  if (typeof v === "string" && v.startsWith("\\x")) return Buffer.from(v.slice(2), "hex");
-  if (typeof v === "string") { try { return Buffer.from(v, "base64"); } catch (_e) { return null; } }
-  return null;
-};
-
 // Pure: turn a { <providerId>: plaintext|null } map into the tenant_settings
 // column patch (encrypt non-empty, null to clear), skipping unknown providers.
+// Each key is encrypted with its own IV (_lib/secrets.js v2). docai_creds_iv
+// is left as it is: keys still stored in v1 need it until re-encryption.
 // Returns { patch, changed } — `changed` is the list of provider ids touched.
-export const buildKeyUpdates = (keys, iv) => {
+export const buildKeyUpdates = (keys) => {
   const patch = {};
   const changed = [];
   for (const [id, val] of Object.entries(keys || {})) {
     const p = BY_ID.get(id);
     if (!p) continue;
     const s = val == null ? "" : String(val).trim();
-    patch[p.col] = s === "" ? null : encryptField(s, iv);
+    patch[p.col] = s === "" ? null : encryptField(s);
     changed.push(id);
   }
   return { patch, changed };
@@ -87,14 +78,8 @@ export default async function handler(req, res) {
         if (!isSecretsConfigured()) {
           return json(res, 400, { error: { message: "Secret storage is not configured (ANVIL_SECRETS_KEY); cannot store provider keys." } });
         }
-        const settings = await tenantSettings(svc, ctx.tenantId);
-        let iv = toIvBuffer(settings?.docai_creds_iv);
-        // Regenerate when absent OR not exactly IV_LEN bytes — a pre-fix garbage
-        // IV (a JSON-serialised Buffer stored as bytea) coerces to the wrong
-        // length and would make createCipheriv throw. Nothing valid was ever
-        // stored under it, so a fresh IV loses nothing.
-        if (!iv || iv.length !== IV_LEN) { iv = newIv(); updates.docai_creds_iv = iv; }
-        const { patch, changed } = buildKeyUpdates(body.keys, iv);
+        await tenantSettings(svc, ctx.tenantId);   // creates the row on first use
+        const { patch, changed } = buildKeyUpdates(body.keys);
         Object.assign(updates, patch);
         changedKeys = changed;
       }

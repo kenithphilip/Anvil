@@ -24,7 +24,7 @@ import {
 } from "./po-delivery-contact.js";
 
 const apiKey = (settings) => {
-  if (settings?.docai_gemini_api_key_enc && settings?.docai_creds_iv) {
+  if (settings?.docai_gemini_api_key_enc) {
     try { return decryptField(settings.docai_gemini_api_key_enc, settings.docai_creds_iv); }
     catch (_e) { /* fall through */ }
   }

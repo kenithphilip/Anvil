@@ -18,7 +18,7 @@
 
 import crypto from "node:crypto";
 import { safeFetch } from "./safe-fetch.js";
-import { encryptField, decryptField, newIv, isSecretsConfigured } from "./secrets.js";
+import { encryptField, decryptField, isSecretsConfigured } from "./secrets.js";
 
 const LOGIN_HOST = "https://login.microsoftonline.com";
 const GRAPH = "https://graph.microsoft.com/v1.0";
@@ -68,22 +68,18 @@ export const graphUiReturnUrl = (status) =>
   publicBase() + "/#/admin?tab=communications&graph=" + encodeURIComponent(status);
 
 // ── crypto: creds + tokens on tenant_settings ───────────────────────────────
-export const graphEncryptSecret = ({ client_secret }) => {
-  const iv = newIv();
-  return { graph_client_secret_enc: encryptField(client_secret, iv), graph_creds_iv: iv };
-};
+export const graphEncryptSecret = ({ client_secret }) => ({
+  graph_client_secret_enc: encryptField(client_secret),
+});
 
-export const graphEncryptTokens = ({ access_token, refresh_token }) => {
-  const iv = newIv();
-  return {
-    graph_access_token_enc: access_token ? encryptField(access_token, iv) : null,
-    graph_refresh_token_enc: refresh_token ? encryptField(refresh_token, iv) : null,
-    graph_token_iv: iv,
-  };
-};
+export const graphEncryptTokens = ({ access_token, refresh_token }) => ({
+  graph_access_token_enc: access_token ? encryptField(access_token) : null,
+  graph_refresh_token_enc: refresh_token ? encryptField(refresh_token) : null,
+});
 
+// ivCol holds the bundle IV of a v1 value; a v2 value carries its own.
 const decCol = (encCol, ivCol, s) => {
-  if (s?.[encCol] && s?.[ivCol]) { try { return decryptField(s[encCol], s[ivCol]); } catch (_e) { return null; } }
+  if (s?.[encCol]) { try { return decryptField(s[encCol], s[ivCol]); } catch (_e) { return null; } }
   return null;
 };
 export const graphDecryptSecret = (s) => decCol("graph_client_secret_enc", "graph_creds_iv", s);

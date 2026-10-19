@@ -7,7 +7,7 @@
 //
 // Reads use OData /data/<EntitySet>?cross-company=true&$filter=...
 
-import { decryptField, encryptField, isSecretsConfigured, newIv } from "./secrets.js";
+import { decryptField, encryptField, requireSecretsConfigured } from "./secrets.js";
 import { oauth2ClientCredentials, oauth2Evict } from "./oauth2.js";
 import { safeFetch } from "./safe-fetch.js";
 
@@ -15,7 +15,7 @@ export const d365DecryptCreds = (s) => {
   if (!s) return s;
   const out = { ...s };
   const tryDec = (encCol, plainCol) => {
-    if (s[encCol] && s.d365_creds_iv) {
+    if (s[encCol]) {
       try { return decryptField(s[encCol], s.d365_creds_iv); }
       catch (_e) { return s[plainCol] || null; }
     }
@@ -27,15 +27,11 @@ export const d365DecryptCreds = (s) => {
 };
 
 export const d365EncryptCreds = ({ client_id, client_secret }) => {
-  if (!isSecretsConfigured()) {
-    return { d365_client_id: client_id, d365_client_id_enc: null, d365_client_secret_enc: null, d365_creds_iv: null };
-  }
-  const iv = newIv();
+  requireSecretsConfigured();
   return {
     d365_client_id: null,
-    d365_client_id_enc: encryptField(client_id, iv),
-    d365_client_secret_enc: encryptField(client_secret, iv),
-    d365_creds_iv: iv,
+    d365_client_id_enc: encryptField(client_id),
+    d365_client_secret_enc: encryptField(client_secret),
   };
 };
 

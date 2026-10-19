@@ -23,7 +23,7 @@ import { classifyColumns } from "./table-columns.js";
 const HOSTED_URL = "https://api.unstructured.io/general/v0/general";
 
 const apiKey = (settings) => {
-  if (settings?.docai_unstructured_api_key_enc && settings?.docai_creds_iv) {
+  if (settings?.docai_unstructured_api_key_enc) {
     try { return decryptField(settings.docai_unstructured_api_key_enc, settings.docai_creds_iv); }
     catch (_e) { /* */ }
   }

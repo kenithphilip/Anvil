@@ -19,7 +19,7 @@ import { safeAwait } from "../_lib/safe-thenable.js";
 
 const readActiveTotpSecret = (row) => {
   if (!row) return null;
-  if (row.totp_secret_enc && row.totp_secret_iv) {
+  if (row.totp_secret_enc) {
     try { return decryptField(row.totp_secret_enc, row.totp_secret_iv); }
     catch (_) { return row.totp_secret || null; }
   }

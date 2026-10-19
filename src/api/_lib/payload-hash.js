@@ -76,3 +76,47 @@ export const computeOrderPayloadHash = (order) => {
   if (!payload.lines.length && !payload.po_number) return null;
   return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 };
+
+// Public: the hash to store after a write that turns `before` into `after`,
+// or null to leave the stored one as it is. The writers that change an
+// order's lines or customer call it: the PATCH, the quote reconcile and the
+// background extraction writeback. The ERP push and sync handlers write only
+// their own keys under result, never the lines.
+//
+// One writer is a deliberate exception. A customer merge
+// (_lib/customer-merge.js) re-points orders.customer_id from a duplicate
+// record to the surviving one. It is the same buyer, so the stored hash
+// stays, and the approver's hash still approves. The next content write moves
+// it, and the reconcile's once-per-hash guard lets the survivor's quotes in.
+//
+// It moves when what the approver approves moved, whoever wrote it and
+// whether or not a quote priced the order. It used to stop moving once an
+// order had a quote_id, and the reconcile links a quote to every scanned PO
+// it matches, so an edit after the approver loaded such an order was still
+// approved.
+//
+// It does not move for a write that changes none of that: a re-save of the
+// same lines, a reconcile that filled nothing, a status change. So an
+// approver's hash stays good while the order is what they saw, and an order
+// converted from a quote keeps the quote's hash (quotes/convert.js) until its
+// content changes. An order with no stored hash gets one.
+export const payloadHashAfterWrite = (before, after) => {
+  const next = computeOrderPayloadHash(after);
+  if (!next) return null;
+  if (before?.payload_hash && computeOrderPayloadHash(before) === next) return null;
+  return next;
+};
+
+// Public: the approval columns to clear after a server write that changed
+// what an approved order's approver approved, or null. The PATCH clears them
+// for an edit (editKeys in orders/[id].js). The quote reconcile and the
+// background writeback can change an APPROVED order's lines too: the manual
+// reconcile runs at any status, and the writeback lands whenever its job
+// finishes. Without this the approval stayed on lines its approver never saw,
+// and the Tally push, which checks only that an approval exists, pushed them.
+// A write that changes nothing keeps the approval.
+export const approvalClearedByContentChange = (before, after) => {
+  if (!before?.approval) return null;
+  if (computeOrderPayloadHash(before) === computeOrderPayloadHash(after)) return null;
+  return { approval: null, approval_expires_at: null, approval_actions: [] };
+};

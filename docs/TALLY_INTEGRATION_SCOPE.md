@@ -974,7 +974,7 @@ The JSON blob remains the editing surface. This PR does not move its other reade
 | `accounting_snapshot_version` | `int` | which approval |
 | `accounting_snapshot_at` | `timestamptz` | |
 | `accounting_snapshot_by` | `uuid` | `ctx.user.id` |
-| `accounting_snapshot_hash` | `text` | sha256 of the canonical snapshot, the integration content hash for orders. It is independent of `payload_hash`, which quote-derived orders inherit from the quote and never recompute (`orders/[id].js:209-221`; `quotes/convert.js:155`) |
+| `accounting_snapshot_hash` | `text` | sha256 of the canonical snapshot, the integration content hash for orders. It is independent of `payload_hash`, which an order converted from a quote inherits from the quote and keeps until its lines or customer change (`payloadHashAfterWrite` in `_lib/payload-hash.js`; `quotes/convert.js:155`) |
 | `narration` | `text` | W r17. `so_message` (`162:23`) is a customer-facing PDF note, not an accounting narration |
 
 Function **`orders_write_approval_snapshot(p_tenant, p_order, p_approved_at, p_actor, p_lines jsonb, p_snapshot jsonb, p_hash text)`**, `returns jsonb`. In one transaction it:
@@ -1344,7 +1344,7 @@ For an opted-in tenant:
    - Today only the hash's presence is checked (`orders/[id].js:169`).
    - The stored value is the right comparison for both kinds of order:
      - **Scanned orders:** the handler keeps the stored hash current on every content edit (`orders/[id].js:209-221`), so a mismatch means the operator approved an older version.
-     - **Quote-derived orders:** the stored hash is the quote's, carried by `quotes/convert.js:155` and never recomputed (`orders/[id].js:215-216`). The workspace sends exactly that stored value (`so-workspace.tsx:654`), so the check passes.
+     - **Orders converted from a quote:** the stored hash is the quote's, carried by `quotes/convert.js:155`, until the first content edit moves it like any order's (`payloadHashAfterWrite` in `_lib/payload-hash.js`). The workspace sends exactly that stored value (`so-workspace.tsx:654`), so the check passes.
    - Recomputing `computeOrderPayloadHash` here instead would refuse every quote-derived approval, because the quote hash covers a different object (`quotes/send.js:331-339` against `payload-hash.js:43-70`).
 2. **Approval** is written as today.
 3. **Build the snapshot in JS** with pure functions:

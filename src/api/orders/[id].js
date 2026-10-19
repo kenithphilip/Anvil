@@ -8,13 +8,18 @@ import { lineCandidates, lineSapCandidates } from "../_lib/item-mapper.js";
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 import { promoteApprovedOrder } from "../eval/promote.js";
 import { requireOrderPatchAction } from "../_lib/order-write-gate.js";
-import { computeOrderPayloadHash } from "../_lib/payload-hash.js";
+import { computeOrderPayloadHash, payloadHashAfterWrite } from "../_lib/payload-hash.js";
 import { autoReconcileOrder, hasReconcilableLines, AUTO_RECONCILE_STATUSES } from "../_lib/order-reconcile.js";
 import { hasUnresolvedBlocker, firstUnresolvedBlocker, mergeBlockersForward, resolveFinding } from "../_lib/blocking-findings.js";
 import { IDENTITY_KEYS, planIdentityEdit } from "../_lib/order-identity.js";
 
+// payload_hash is not here. It is what an approver's hash is checked against,
+// so the server is its only writer (the stamp below, the quote reconcile, the
+// background writeback). A client that sent one could reset it to the value a
+// stale view loaded, and the STALE_APPROVAL check would never fire. No screen
+// sends it.
 const APPROVE_INPUTS = [
-  "status", "approval", "payload_hash", "result",
+  "status", "approval", "result",
   "rule_findings", "anomaly_flags", "evidence_by_field", "line_edits",
   "blocker_summary", "format_change_summary", "cost_avoided_reason",
   "api_usage", "token_estimate",
@@ -218,6 +223,20 @@ export default async function handler(req, res) {
             },
           });
         }
+        // An approval binds to lines that are already stored and that the
+        // approver loaded. One PATCH that approves and changes the lines would
+        // approve lines nobody reviewed, and the hash would move off the one
+        // the approval names in the same write. Save, reload, then approve.
+        // Re-sending the same lines is not a change. (planIdentityEdit above
+        // already refuses identity keys in an approve.)
+        if ("result" in patch && computeOrderPayloadHash({ ...prev, ...patch }) !== computeOrderPayloadHash(prev)) {
+          return json(res, 409, {
+            error: {
+              code: "APPROVE_WITH_CHANGES",
+              message: "This request changes the order's lines and approves it at once. Save the changes, reload the order, then approve it.",
+            },
+          });
+        }
         // CM P3b: refuse to approve an order that still has an unresolved
         // blocking finding. Evaluate the INCOMING findings (the merged patch
         // when the body sets them, else prev) so a single save+approve PATCH
@@ -255,30 +274,24 @@ export default async function handler(req, res) {
 
       // Stamp orders.payload_hash so a SCANNED PO can be approved at all.
       // Approve refuses without approval.payloadHash, and the workspace reads
-      // it from this column — but it was only ever written on the quote path,
+      // it from this column, but it was only ever written on the quote path,
       // so an order created from a scanned PO could never be approved and
       // therefore never reach Tally.
       //
-      // Scanned POs (no quote_id): keep it current on every content edit and
-      // on send-for-review, so the stored hash always describes the order as
-      // it stands. Quote-derived orders: only fill a MISSING hash — the value
-      // carried over from quotes/send.js identifies the exact quote the
-      // customer accepted, and overwriting it would break that linkage.
+      // It moves on every content edit, quote-priced or not, and is filled on
+      // send-for-review, so the approve check above refuses an approver who
+      // loaded the order before an edit. A write that leaves the content as it
+      // was keeps the stored hash, including one carried over from a quote
+      // (payloadHashAfterWrite in payload-hash.js).
       //
       // An identity change counts as a content edit: the hash covers the
       // customer (payload-hash.js), so an approver who loaded the order
-      // before the customer moved is refused as stale. A customer change can
-      // unlink the old customer's quote, and then the order is no longer
-      // quote-derived.
+      // before the customer moved is refused as stale.
       const movingToReview = body.status === "PENDING_REVIEW" && prev.status !== "PENDING_REVIEW";
       const resultEdited = "result" in patch;
       if (movingToReview || resultEdited || identityChanged) {
-        const isQuoteDerived = !!("quote_id" in patch ? patch.quote_id : prev.quote_id);
-        if (!isQuoteDerived || !prev.payload_hash) {
-          const nextResult = resultEdited ? patch.result : prev.result;
-          const hash = computeOrderPayloadHash({ ...prev, ...patch, result: nextResult });
-          if (hash) patch.payload_hash = hash;
-        }
+        const hash = payloadHashAfterWrite(prev, { ...prev, ...patch });
+        if (hash) patch.payload_hash = hash;
       }
 
       const { data, error } = await svc.from("orders").update(patch).eq("tenant_id", ctx.tenantId).eq("id", id).select("*").single();
@@ -442,11 +455,23 @@ export default async function handler(req, res) {
       // hash covers the customer, so the reconcile's once-per-hash guard
       // lets it run.
       const customerChanged = !!identity?.customerChanged;
+      let order = data;
       if (("result" in body || customerChanged) && AUTO_RECONCILE_STATUSES.has(data.status) && hasReconcilableLines(data)) {
-        await autoReconcileOrder(svc, ctx, data.id, { trigger: customerChanged ? "customer_changed" : "lines_changed" });
+        const rec = await autoReconcileOrder(svc, ctx, data.id, { trigger: customerChanged ? "customer_changed" : "lines_changed" });
+        // A reconcile that filled a line moved the hash after the write above.
+        // Return the order as it now stands, so a caller that approves from
+        // this response (an agent following order-next-step) sends the stored
+        // hash, not one that is already stale. Best-effort: on a failed read
+        // the written row stands, and an approve from it fails closed (409).
+        if (rec?.status === "reconciled") {
+          try {
+            const fresh = await svc.from("orders").select("*").eq("tenant_id", ctx.tenantId).eq("id", id).maybeSingle();
+            if (!fresh.error && fresh.data) order = fresh.data;
+          } catch { /* the written row stands */ }
+        }
       }
 
-      return json(res, 200, { order: data, approvals_created: approvalsCreated });
+      return json(res, 200, { order, approvals_created: approvalsCreated });
     }
 
     if (req.method === "DELETE") {

@@ -8,6 +8,7 @@ import React, { ReactNode, useEffect, useMemo, useState } from "react";
 import { Icon } from "../lib/icons";
 import type { NavGroup, RoleEntry } from "../lib/nav";
 import type { ShellTelemetry } from "../lib/telemetry";
+import { NotificationsBell } from "./Shell";
 
 const PRIMARY_TABS: Array<{ id: string; label: string; icon: ReactNode }> = [
   { id: "home",      label: "My Day",   icon: Icon.bolt },
@@ -65,6 +66,8 @@ export const MobileShell: React.FC<MobileShellProps> = ({
         <div className="app-mobile-id" title={session?.email || "Guest"}>
           {session?.initials || "GU"}
         </div>
+        {/* Last in the row, so the right-anchored menu stays on screen. */}
+        <NotificationsBell onRoute={onRoute} />
       </header>
 
       <main className="app-mobile-main" id="main" tabIndex={-1}>

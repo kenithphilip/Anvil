@@ -84,7 +84,10 @@ const RecentMenu: React.FC = () => {
   );
 };
 
-const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike: boolean }> = ({ onRoute, isAdminLike }) => {
+// The bell for every role, on desktop (Shell) and phone (MobileShell). The
+// server decides what each person sees: their own notices, plus the broadcast
+// rows for admin and operator.
+export const NotificationsBell: React.FC<{ onRoute?: (id: string) => void }> = ({ onRoute }) => {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<NotificationRow[]>([]);
   const [unread, setUnread] = useState<number>(0);
@@ -92,7 +95,6 @@ const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike:
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   const load = async () => {
-    if (!isAdminLike) { setItems([]); setUnread(0); return; }
     try {
       const resp: any = await AnvilBackend?.notifications?.list?.();
       setItems(resp?.notifications || []);
@@ -100,11 +102,8 @@ const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike:
     } catch (_) { /* leave previous state */ }
   };
 
-  // Poll on mount + when the tab becomes visible. Skip for non-
-  // admins, since the backend filter would still surface tenant-wide
-  // events (resolved=false), but the bell is admin-only.
+  // Poll on mount + when the tab becomes visible.
   useEffect(() => {
-    if (!isAdminLike) return;
     let timer: number | undefined;
     const tick = () => { if (!document.hidden) load(); };
     tick();
@@ -115,7 +114,7 @@ const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike:
       document.removeEventListener("visibilitychange", tick);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdminLike]);
+  }, []);
 
   // Click-outside to close.
   useEffect(() => {
@@ -171,8 +170,6 @@ const NotificationsBell: React.FC<{ onRoute?: (id: string) => void; isAdminLike:
     try { await AnvilBackend?.notifications?.markAllRead?.(); } catch (_) { /* ignore */ }
     load();
   };
-
-  if (!isAdminLike) return null;
 
   return (
     <div ref={wrapRef} className="head-pill-wrap" style={{ position: "relative" }}>
@@ -597,7 +594,7 @@ export const Shell: React.FC<ShellProps> = ({
         {Icon.history} Thread
       </button>
 
-      <NotificationsBell onRoute={onRoute} isAdminLike={role?.id === "admin" || role?.id === "operator"} />
+      <NotificationsBell onRoute={onRoute} />
     </header>
 
     <aside className="app-side">

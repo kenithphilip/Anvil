@@ -24,7 +24,7 @@ import {
 } from "../extraction-kpis.js";
 import { fetchAllRows } from "../customer-owner.js";
 import {
-  ORDER_ACTIONS, buildTimelines, timeToSo, timeToSubmit, approvalWait, rework, actionsPerOrder,
+  ORDER_ACTIONS, DECISION_OUTCOMES, buildTimelines, timeToSo, timeToSubmit, approvalWait, rework, actionsPerOrder,
 } from "../so-cycle-kpis.js";
 
 const DAY = 86400000;
@@ -282,13 +282,15 @@ export const METRICS = [
   },
   {
     id: "order_approval_time_median", label: "Median order created→approved (days)", domain: "operations", unit: "days",
-    description: "Median days from an order being created to being approved, over the window.",
+    // The id stays for existing callers. approved_at holds the LATEST
+    // approval, so this is not the time to the first approval (plan C-7).
+    description: "Median days from an order being created to its LATEST approval, over the window. orders.approved_at is overwritten on each re-approval, so an order returned and approved again reads long. For the time to the first approval use so_time_to_so_hours.",
     params: ["window_days"],
     fetch: (svc, t, p) => fetchOrders(svc, t, sinceIso(p.nowMs, p.windowDays)),
     reduce: (orders) => {
       const ct = computeCycleTime([], orders);
       return { value: ct.order_to_approved.median, count: ct.order_to_approved.n,
-        provenance: "median(approved_at − created_at in days) over non-cancelled orders in window" };
+        provenance: "median(approved_at − created_at in days) over non-cancelled orders in window; approved_at is the latest approval (each re-approval overwrites it); so_time_to_so_hours measures the first approval" };
     },
   },
   {
@@ -314,7 +316,7 @@ export const METRICS = [
         value: s.p50, count: s.n, denominator: (orders || []).length,
         breakdown: percentileRows(s),
         evidence: soEvidence(s.ids, complete, { pending: s.pending, cancelled_before_approval: s.cancelled }),
-        provenance: "P50 and P90 of hours from orders.created_at to the first audit row that moves the order to APPROVED, over orders created in the window; orders.approved_at is not read",
+        provenance: "P50 and P90 of hours from orders.created_at to the first audit row that moves the order to APPROVED, over orders created in the window; orders.approved_at is not read; orders not yet approved are left out (see evidence.pending), so a short window reads low",
       };
     },
   },
@@ -329,22 +331,24 @@ export const METRICS = [
         value: s.p50, count: s.n, denominator: (orders || []).length,
         breakdown: percentileRows(s),
         evidence: soEvidence(s.ids, complete, { pending: s.pending, cancelled_before_submit: s.cancelled }),
-        provenance: "P50 and P90 of hours from orders.created_at to the first audit row that moves the order to PENDING_REVIEW, over orders created in the window",
+        provenance: "P50 and P90 of hours from orders.created_at to the first audit row that moves the order to PENDING_REVIEW, over orders created in the window; orders not yet submitted are left out (see evidence.pending), so a short window reads low",
       };
     },
   },
   {
     id: "so_approval_wait_hours", label: "Approval wait (P50 hours)", domain: "operations", unit: "hours",
-    description: "Hours from an order's first submission for review to the first decision on it (approve, return or cancel), P50 with P90 in the breakdown.",
+    description: "Hours from an order's first submission for review to the first decision on it (approve, return or cancel), P50 with P90 in the breakdown. A recall to draft or a move to blocked is not a decision and is left out.",
     params: ["window_days"],
     fetch: (svc, t, { nowMs, windowDays }) => fetchSoCycle(svc, t, sinceIso(nowMs, windowDays)),
     reduce: ({ orders, events, complete }) => {
       const s = approvalWait(buildTimelines(orders, events));
       return {
-        value: s.p50, count: s.n, denominator: s.ids.length + s.waiting,
+        value: s.p50, count: s.n, denominator: s.ids.length + s.waiting + s.excluded,
         breakdown: percentileRows(s),
-        evidence: soEvidence(s.ids, complete, { by_outcome: s.by_outcome, waiting: s.waiting }),
-        provenance: "P50 and P90 of hours from the first audit row that moves the order to PENDING_REVIEW to the next status change (the first decision), over orders created in the window; orders still in review are left out",
+        evidence: soEvidence(s.ids, complete, {
+          by_outcome: s.by_outcome, decisions: DECISION_OUTCOMES, excluded: s.excluded, waiting: s.waiting,
+        }),
+        provenance: "P50 and P90 of hours from the first audit row that moves the order to PENDING_REVIEW to the next status change, when that change is a decision (" + DECISION_OUTCOMES.join(", ") + "), over orders created in the window; any other first exit (a recall to DRAFT, a move to BLOCKED) is counted in evidence.by_outcome and evidence.excluded but not in the P50 and P90; orders not yet decided are left out (see evidence.waiting), so a short window reads low",
       };
     },
   },
@@ -364,8 +368,23 @@ export const METRICS = [
     },
   },
   {
+    id: "so_returns_per_order", label: "Returns per order", domain: "operations", unit: "count",
+    description: "Mean number of times the approver returned an order for correction, over the orders sent for review, with the most returns on one order in the breakdown.",
+    params: ["window_days"],
+    fetch: (svc, t, { nowMs, windowDays }) => fetchSoCycle(svc, t, sinceIso(nowMs, windowDays)),
+    reduce: ({ orders, events, complete }) => {
+      const r = rework(buildTimelines(orders, events));
+      return {
+        value: r.returns_per_order, count: r.returns, denominator: r.submitted,
+        breakdown: r.submitted ? [{ label: "max returns", value: r.max_returns }] : [],
+        evidence: soEvidence(r.ids, complete, { reworked: r.reworked }),
+        provenance: "count(manager_requested_correction audit rows) / count(orders sent to PENDING_REVIEW), over orders created in the window",
+      };
+    },
+  },
+  {
     id: "so_actions_per_order", label: "Actions per order", domain: "operations", unit: "count",
-    description: "Mean number of state-changing actions people took on an order that reached an SO, split by role.",
+    description: "Mean number of state-changing actions people took on an order that reached an SO, up to the order's last approval, split by role. Edits, schedules and cancels after the last approval are the next stage and are not counted.",
     params: ["window_days"],
     fetch: (svc, t, { nowMs, windowDays }) => fetchSoCycle(svc, t, sinceIso(nowMs, windowDays)),
     reduce: ({ orders, events, complete }) => {
@@ -374,7 +393,7 @@ export const METRICS = [
         value: a.mean, count: a.orders,
         breakdown: a.by_role,
         evidence: soEvidence(a.ids, complete, { actions: a.actions, median: a.median, by_action: a.by_action }),
-        provenance: "audit rows with an actor and an action in {" + ORDER_ACTIONS.join(", ") + "} / count(orders created in the window that reached APPROVED); by role from actor_role; system rows, reads, exports and the ERP push are not counted",
+        provenance: "audit rows with an actor and an action in {" + ORDER_ACTIONS.join(", ") + "}, written up to the order's last move to APPROVED / count(orders created in the window that reached APPROVED); by role from actor_role; rows after the last approval, system rows, reads, exports and the ERP push are not counted",
       };
     },
   },

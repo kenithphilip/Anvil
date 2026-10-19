@@ -64,7 +64,7 @@ export const buildTimelines = (orders, events) => {
     if (!t || !Number.isFinite(at)) continue;
     if (e.action === RETURN_ACTION) t.returns += 1;
     // A person's action. A row with no actor was written by the system.
-    if (e.actor && ORDER_ACTION_SET.has(e.action)) t.actions.push({ action: e.action, role: e.actor_role || "unknown" });
+    if (e.actor && ORDER_ACTION_SET.has(e.action)) t.actions.push({ action: e.action, role: e.actor_role || "unknown", at });
     if (TRANSITION_ACTIONS.has(e.action) && e.to_status && e.to_status !== e.from_status) {
       t.transitions.push({ at, from: e.from_status || null, to: e.to_status, action: e.action });
     }
@@ -77,6 +77,11 @@ export const buildTimelines = (orders, events) => {
     t.submittedMs = submitIdx >= 0 ? t.transitions[submitIdx].at : null;
     t.approvedMs = approveIdx >= 0 ? t.transitions[approveIdx].at : null;
     t.cancelledMs = cancelIdx >= 0 ? t.transitions[cancelIdx].at : null;
+    // The LAST move to APPROVED ends the order's way to an SO, with any
+    // re-work after a return. What happens after it is the next stage.
+    let lastApproveIdx = -1;
+    t.transitions.forEach((x, i) => { if (x.to === "APPROVED") lastApproveIdx = i; });
+    t.lastApprovedMs = lastApproveIdx >= 0 ? t.transitions[lastApproveIdx].at : null;
     // The first decision: the first time the order leaves review after it
     // first entered it, whatever the exit.
     const exit = submitIdx >= 0 ? t.transitions[submitIdx + 1] : null;
@@ -121,19 +126,27 @@ export const timeToSubmit = (timelines) => {
   return { ...spread(hours), ids, pending, cancelled };
 };
 
+// The exits from review that are an approver's decision. A recall to DRAFT
+// with no reason, or a move to BLOCKED, is not.
+export const DECISION_OUTCOMES = Object.freeze(["approved", "returned", "cancelled"]);
+const DECISION_SET = new Set(DECISION_OUTCOMES);
+
 // First submission to the first decision, split by what the decision was.
+// Every first exit from review is in by_outcome. Only the approver's
+// decisions are in the P50 and P90; the other exits are `excluded`.
 export const approvalWait = (timelines) => {
   const hours = [], ids = [];
   const byOutcome = {};
-  let waiting = 0;
+  let waiting = 0, excluded = 0;
   for (const t of timelines || []) {
     if (t.submittedMs == null) continue;
     if (!t.decision) { waiting += 1; continue; }
+    byOutcome[t.decision.outcome] = (byOutcome[t.decision.outcome] || 0) + 1;
+    if (!DECISION_SET.has(t.decision.outcome)) { excluded += 1; continue; }
     hours.push(hoursBetween(t.submittedMs, t.decision.at));
     ids.push(t.id);
-    byOutcome[t.decision.outcome] = (byOutcome[t.decision.outcome] || 0) + 1;
   }
-  return { ...spread(hours), ids, by_outcome: byOutcome, waiting };
+  return { ...spread(hours), ids, by_outcome: byOutcome, waiting, excluded };
 };
 
 // Returns over the orders that were sent for review. An order with a return
@@ -154,13 +167,18 @@ export const rework = (timelines) => {
 };
 
 // A person's actions per order, over the orders that reached an SO (a full
-// cycle), with the share each role took.
+// cycle), with the share each role took. Only the actions up to the order's
+// last approval count. An edit, a schedule or a cancel after it belongs to
+// the next stage; counting it would make one cohort's number grow with age.
 export const actionsPerOrder = (timelines) => {
   const done = (timelines || []).filter((t) => t.approvedMs != null);
   const byRole = {}, byAction = {};
+  const perOrder = [];
   let actions = 0;
   for (const t of done) {
-    for (const a of t.actions) {
+    const counted = t.actions.filter((a) => a.at <= t.lastApprovedMs);
+    perOrder.push(counted.length);
+    for (const a of counted) {
       actions += 1;
       byRole[a.role] = (byRole[a.role] || 0) + 1;
       byAction[a.action] = (byAction[a.action] || 0) + 1;
@@ -171,7 +189,7 @@ export const actionsPerOrder = (timelines) => {
     orders: n,
     actions,
     mean: n ? round2(actions / n) : null,
-    median: median(done.map((t) => t.actions.length)),
+    median: median(perOrder),
     by_role: Object.entries(byRole)
       .map(([role, count]) => ({ label: role, value: round2(count / n), count }))
       .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label)),

@@ -1,7 +1,7 @@
 // Plan C-7 (audit PR 1): the SO cycle and rework baseline in the governed
-// metric catalog. Five metrics, each rebuilt from the append-only order audit
-// rows: time to SO, engineer time to submit, approval wait, re-work rate and
-// actions per order by role.
+// metric catalog. Six metrics, each rebuilt from the append-only order audit
+// rows: time to SO, engineer time to submit, approval wait, re-work rate,
+// returns per order and actions per order by role.
 //
 // The tests drive computeMetric, POST /api/metrics and the copilot's
 // query_metric tool against an in-memory table store whose query builder
@@ -210,6 +210,20 @@ describe("time to SO", () => {
     expect(r.breakdown).toEqual([{ label: "P50", value: 3 }, { label: "P90", value: 3 }]);
   });
 
+  it("the old order_approval_time_median reads the latest approval and says so", async () => {
+    h.state.tables.orders = h.state.tables.orders.filter((o) => o.id === O2);
+    const old = await metric("order_approval_time_median");
+    // approved_at holds the second approval, 10 h after creation (0.4 days).
+    expect(old).toMatchObject({ value: 0.4, unit: "days", count: 1 });
+    expect(old.provenance).toMatch(/latest approval/);
+    const first = await metric("so_time_to_so_hours");
+    expect(first.value).toBe(3);
+    // The copilot's list_metrics tells the model which one is the first approval.
+    const listed = listMetrics().find((m) => m.id === "order_approval_time_median");
+    expect(listed.description).toMatch(/LATEST approval/);
+    expect(listed.description).toMatch(/so_time_to_so_hours/);
+  });
+
   it("leaves a cancelled order out, and says no data when nothing reached an SO", async () => {
     h.state.tables.orders = h.state.tables.orders.filter((o) => o.id === O3);
     const r = await metric("so_time_to_so_hours");
@@ -247,6 +261,42 @@ describe("approval wait", () => {
     const r = await metric("so_approval_wait_hours");
     expect(r).toMatchObject({ count: 3, denominator: 4 });
     expect(r.evidence.waiting).toBe(1);
+    expect(r.provenance).toMatch(/not yet decided are left out/);
+  });
+
+  it("an approver's save during review does not end the wait", async () => {
+    // The manager edits a line on O2 while it waits: the status stays
+    // PENDING_REVIEW, so the row is not a decision.
+    h.state.tables.audit_events.push(
+      auditRow(TENANT_A, O2, at(B2, 2.5), "update_order", "PENDING_REVIEW", "PENDING_REVIEW", "mgr"));
+    const r = await metric("so_approval_wait_hours");
+    expect(r.value).toBe(1);
+    expect(r.breakdown).toEqual([{ label: "P50", value: 1 }, { label: "P90", value: 8 }]);
+    expect(r.evidence.by_outcome).toEqual({ returned: 1, approved: 1, cancelled: 1 });
+    h.state.tables.orders = h.state.tables.orders.filter((o) => o.id === O2);
+    const o2 = await metric("so_approval_wait_hours");
+    expect(o2).toMatchObject({ value: 1, count: 1, denominator: 1 });
+  });
+
+  it("a recall to draft or a block is counted by outcome but is not a decision", async () => {
+    // O4 is sent at 1 h and the engineer pulls it back with no reason at 1.5 h.
+    // A fifth order is sent at 1 h and blocked at 30 h.
+    const O5 = "0a000000-0000-4000-8000-000000000005";
+    h.state.tables.orders.push(orderRow(TENANT_A, O5, B4));
+    h.state.tables.audit_events.push(
+      auditRow(TENANT_A, O4, at(B4, 1), "update_order", "DRAFT", "PENDING_REVIEW"),
+      auditRow(TENANT_A, O4, at(B4, 1.5), "update_order", "PENDING_REVIEW", "DRAFT"),
+      auditRow(TENANT_A, O5, at(B4, 1), "update_order", "DRAFT", "PENDING_REVIEW"),
+      auditRow(TENANT_A, O5, at(B4, 30), "update_order", "PENDING_REVIEW", "BLOCKED", "system"),
+    );
+    const r = await metric("so_approval_wait_hours");
+    // Still O1 1 h, O2 1 h, O3 8 h: the 0.5 h recall and the 29 h block are out.
+    expect(r.value).toBe(1);
+    expect(r.breakdown).toEqual([{ label: "P50", value: 1 }, { label: "P90", value: 8 }]);
+    expect(r).toMatchObject({ count: 3, denominator: 5 });
+    expect(r.evidence).toMatchObject({ excluded: 2, waiting: 0 });
+    expect(r.evidence.by_outcome).toEqual({ returned: 1, approved: 1, cancelled: 1, draft: 1, blocked: 1 });
+    expect([...r.evidence.order_ids].sort()).toEqual([O1, O2, O3]);
   });
 });
 
@@ -264,6 +314,28 @@ describe("re-work rate", () => {
     const r = await metric("so_rework_rate");
     expect(r).toMatchObject({ value: 100, count: 1, denominator: 1 });
     expect(r.breakdown).toEqual({ returns: 2, returns_per_order: 2, max_returns: 2 });
+    const per = await metric("so_returns_per_order");
+    expect(per).toMatchObject({ unit: "count", value: 2, count: 2, denominator: 1 });
+    expect(per.breakdown).toEqual([{ label: "max returns", value: 2 }]);
+  });
+});
+
+describe("returns per order", () => {
+  it("is its own metric, with the most returns on one order as a breakdown row", async () => {
+    const r = await metric("so_returns_per_order");
+    // Sent: O1, O2, O3. Returns: O1 two, O2 one. 3 / 3 = 1.
+    expect(r).toMatchObject({ metric_id: "so_returns_per_order", unit: "count", value: 1, count: 3, denominator: 3 });
+    expect(r.breakdown).toEqual([{ label: "max returns", value: 2 }]);
+    expect(r.evidence).toMatchObject({ table: "audit_events", reworked: 2 });
+    expect([...r.evidence.order_ids].sort()).toEqual([O1, O2]);
+  });
+
+  it("says no data when no order was sent for review", async () => {
+    h.state.tables.orders = h.state.tables.orders.filter((o) => o.id === O4);
+    const r = await metric("so_returns_per_order");
+    expect(r.value).toBeNull();
+    expect(r.breakdown).toEqual([]);
+    expect(r).toMatchObject({ count: 0, denominator: 0 });
   });
 });
 
@@ -284,6 +356,35 @@ describe("actions per order", () => {
       create_order: 2, update_order: 6, order_quote_attached: 1,
       manager_requested_correction: 3, approve_order: 3,
     });
+  });
+
+  it("stops at the order's last approval, so later edits do not grow the number", async () => {
+    const before = await metric("so_actions_per_order");
+    // After O1 became an SO at 7 h: a header save, a re-save with the
+    // status still APPROVED, a schedule the next day, and a cancel.
+    h.state.tables.audit_events.push(
+      auditRow(TENANT_A, O1, at(B1, 9), "update_order", "APPROVED", "APPROVED"),
+      auditRow(TENANT_A, O1, at(B1, 9.5), "approve_order", "APPROVED", "APPROVED", "mgr"),
+      auditRow(TENANT_A, O1, at(B1, 31), "schedule_lines_insert", null, null),
+      auditRow(TENANT_A, O1, at(B1, 40), "update_order", "APPROVED", "CANCELLED", "mgr"),
+    );
+    const r = await metric("so_actions_per_order");
+    expect(r).toMatchObject({ value: 7.5, count: 2 });
+    expect(r.breakdown).toEqual(before.breakdown);
+    expect(r.evidence.by_action).toEqual(before.evidence.by_action);
+    expect(r.evidence).toMatchObject({ actions: 15, median: 7.5 });
+    expect(r.provenance).toMatch(/last move to APPROVED/);
+  });
+
+  it("counts the re-work up to a re-approval", async () => {
+    // O2 was approved at 3 h, returned at 5 h and approved again at 10 h:
+    // the return, the re-send and the second approval are all on its way to
+    // the SO. Alone it is 6 actions; an edit at 12 h is not counted.
+    h.state.tables.orders = h.state.tables.orders.filter((o) => o.id === O2);
+    h.state.tables.audit_events.push(auditRow(TENANT_A, O2, at(B2, 12), "update_order", "APPROVED", "APPROVED"));
+    const r = await metric("so_actions_per_order");
+    expect(r).toMatchObject({ value: 6, count: 1 });
+    expect(r.evidence.by_action).toEqual({ create_order: 1, update_order: 2, approve_order: 2, manager_requested_correction: 1 });
   });
 });
 
@@ -337,6 +438,24 @@ describe("tenant isolation and the window", () => {
     expect(r).toMatchObject({ value: 6, count: 1, denominator: 1 });
     expect(r.evidence.capped).toBeUndefined();
   });
+
+  it("says so in the evidence when the history hits the page cap", async () => {
+    // 30 pages of 1000 rows is the cap. 30,000 saves fill it, so the send
+    // and the approval after them are not read and O4 reads as pending.
+    h.state.tables.orders = h.state.tables.orders.filter((o) => o.id === O4);
+    const rows = h.state.tables.audit_events;
+    for (let i = 0; i < 30000; i += 1) {
+      rows.push(auditRow(TENANT_A, O4, at(B4, 0.00001 * (i + 1)), "update_order", "DRAFT", "DRAFT"));
+    }
+    rows.push(
+      auditRow(TENANT_A, O4, at(B4, 2), "update_order", "DRAFT", "PENDING_REVIEW"),
+      auditRow(TENANT_A, O4, at(B4, 6), "approve_order", "PENDING_REVIEW", "APPROVED", "mgr"),
+    );
+    const r = await metric("so_time_to_so_hours");
+    expect(r).toMatchObject({ value: null, count: 0, denominator: 1 });
+    expect(r.evidence).toMatchObject({ capped: true, pending: 1 });
+    expect(r.evidence.note).toMatch(/row cap/);
+  });
 });
 
 describe("the callers: /api/metrics and the copilot tool", () => {
@@ -353,12 +472,13 @@ describe("the callers: /api/metrics and the copilot tool", () => {
     return { status: res.statusCode, body: res.body ? JSON.parse(res.body) : null };
   };
 
-  it("lists the five baseline metrics", async () => {
+  it("lists the six baseline metrics", async () => {
     const r = await call({ method: "GET" });
     expect(r.status).toBe(200);
     const ids = r.body.metrics.map((m) => m.id);
     expect(ids).toEqual(expect.arrayContaining([
-      "so_time_to_so_hours", "so_submit_time_hours", "so_approval_wait_hours", "so_rework_rate", "so_actions_per_order",
+      "so_time_to_so_hours", "so_submit_time_hours", "so_approval_wait_hours", "so_rework_rate",
+      "so_returns_per_order", "so_actions_per_order",
     ]));
     expect(listMetrics().find((m) => m.id === "so_rework_rate")).toMatchObject({ unit: "percent", params: ["window_days"] });
   });

@@ -22,11 +22,19 @@ const ctx = vi.hoisted(() => ({ value: { user: { id: "u-mgr" }, tenantId: "t-1",
 vi.mock("../../api/_lib/supabase.js", () => {
   const from = (table: string) => {
     const filters: Array<[string, unknown]> = [];
+    const preds: Array<(r: any) => boolean> = [];
     let patch: Record<string, unknown> | null = null;
-    const rows = () => ((db as any)[table] || []).filter((r: any) => filters.every(([c, v]) => r[c] === v));
+    const rows = () => ((db as any)[table] || []).filter((r: any) => filters.every(([c, v]) => r[c] === v) && preds.every((p) => p(r)));
     const q: any = {
       select: () => q,
       eq: (c: string, v: unknown) => { filters.push([c, v]); return q; },
+      // The terms read path (the server's exceptions gate) also filters with
+      // is and in, orders, limits, and awaits the list.
+      is: (c: string, v: unknown) => { preds.push((r) => (r[c] ?? null) === v); return q; },
+      in: (c: string, vs: unknown[]) => { preds.push((r) => vs.includes(r[c])); return q; },
+      order: () => q,
+      limit: () => q,
+      then: (f: any, rj: any) => Promise.resolve({ data: JSON.parse(JSON.stringify(rows())), error: null }).then(f, rj),
       update: (p: Record<string, unknown>) => { patch = p; return q; },
       single: async () => {
         const hit = rows();
@@ -79,6 +87,21 @@ const order = (status: string, extra: Record<string, unknown> = {}) => ({
 const seed = (rows: Array<Record<string, any>>) => {
   db.orders.length = 0;
   rows.forEach((r) => db.orders.push(JSON.parse(JSON.stringify(r))));
+  // No terms check unless a test turns it on.
+  for (const t of ["tenant_settings", "order_term_checks", "order_term_flags", "order_term_decisions"]) delete (db as any)[t];
+};
+
+// The terms check on, with one undecided critical flag on the order.
+const seedCriticalTermsFlag = (orderId: string) => {
+  Object.assign(db as any, {
+    tenant_settings: [{ tenant_id: "t-1", terms_check_mode: "on", terms_policy: null }],
+    order_term_checks: [{ id: "chk-1", tenant_id: "t-1", order_id: orderId, superseded_at: null, created_at: "2026-10-10T00:00:00Z", po_terms_status: "read", po_clauses: [] }],
+    order_term_flags: [{
+      id: "fl-1", tenant_id: "t-1", check_id: "chk-1", order_id: orderId, clause: "ld_penalty", outcome: "po_only", severity: "critical",
+      method: "rule", po: { text: "LD at 2% per week, no cap." }, quote: null, baseline: null, created_at: "2026-10-10T00:00:00Z",
+    }],
+    order_term_decisions: [],
+  });
 };
 
 beforeEach(() => {
@@ -231,6 +254,35 @@ describe("PipelineKanban", () => {
     expect(db.orders[0].approval).toBeUndefined();
     // The board reloaded: the card is back in Validate.
     await waitFor(() => expect(within(column("Validate")).getByText("PO-PENDING_REVIEW")).toBeTruthy());
+  });
+
+  it("refuses an Approve drop while an open exception blocks it, in the server's words", async () => {
+    seed([order("PENDING_REVIEW", { payload_hash: "hash-1", approval: null })]);
+    seedCriticalTermsFlag("o-pending_review");
+    await renderBoard();
+    await screen.findByText("PO-PENDING_REVIEW");
+
+    await dragTo("PO-PENDING_REVIEW", "Approve");
+
+    expect(serverUpdate).toHaveBeenCalledWith("o-pending_review", { status: "APPROVED", approval: { payloadHash: "hash-1" } });
+    expect(await screen.findByText(/Cannot approve this order\. Blocked by: Liquidated damages: only the PO states it\. Decide it on the order first\. The board has been reloaded\./)).toBeTruthy();
+    expect(db.orders[0].status).toBe("PENDING_REVIEW");
+    expect(db.orders[0].approval).toBeNull();
+    await waitFor(() => expect(within(column("Validate")).getByText("PO-PENDING_REVIEW")).toBeTruthy());
+  });
+
+  it("refuses a Validate drop of a DRAFT while an open exception blocks sending it", async () => {
+    seed([order("DRAFT")]);
+    seedCriticalTermsFlag("o-draft");
+    await renderBoard();
+    await screen.findByText("PO-DRAFT");
+
+    await dragTo("PO-DRAFT", "Validate");
+
+    expect(serverUpdate).toHaveBeenCalledWith("o-draft", { status: "PENDING_REVIEW" });
+    expect(await screen.findByText(/Cannot send this order for approval\. Blocked by: Liquidated damages: only the PO states it\. Decide it on the order first\. The board has been reloaded\./)).toBeTruthy();
+    expect(db.orders[0].status).toBe("DRAFT");
+    await waitFor(() => expect(within(column("Inbox")).getByText("PO-DRAFT")).toBeTruthy());
   });
 
   it("refuses an Approve drop on an order with no payload hash, without calling the server", async () => {

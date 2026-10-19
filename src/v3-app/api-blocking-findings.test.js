@@ -59,6 +59,16 @@ describe("mergeBlockersForward", () => {
     const afterResolve = mergeBlockersForward([{ severity: "high" }], [{ ...blocker(), resolved: true }]);
     expect(hasUnresolvedBlocker(afterResolve)).toBe(false);
   });
+  it("carries a blocker that no extraction raised (the reconcile's -MOD finding)", () => {
+    const mod = { code: "mod_quote_bom_pending", rule_id: "mod_quote_bom_pending", severity: "ERROR", blocks: true, detail: "1 quoted part still provisional (-MOD)" };
+    const merged = mergeBlockersForward([{ key: "totals", severity: "high" }], [mod, blocker()]);
+    expect(merged.map((f) => f.code || f.key)).toEqual(["totals", "mod_quote_bom_pending", "line_count_shortfall"]);
+  });
+  it("knows a blocker by rule_id when it has no code, and does not duplicate it", () => {
+    const byRule = { rule_id: "line_count_shortfall", blocks: true, detail: "PO declares 190; extracted 6" };
+    expect(mergeBlockersForward([byRule], [byRule])).toHaveLength(1);
+    expect(mergeBlockersForward([], [byRule])).toEqual([byRule]);
+  });
 });
 
 describe("resolveFinding", () => {

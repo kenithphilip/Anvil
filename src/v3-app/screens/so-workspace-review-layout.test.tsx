@@ -95,6 +95,27 @@ describe("a clean order", () => {
     expect(patch.preflight_payload).toMatchObject({ submit_note: "Customer confirmed rates by phone.", source_document_id: "doc-1", last_validated_at: "2026-10-10T00:00:00Z" });
   });
 
+  it("shows the server's words and reloads when the server finds a blocking exception the screen did not", async () => {
+    // The terms were re-checked after this screen loaded: the server's list
+    // has a critical flag (409 ORDER_HAS_BLOCKING_EXCEPTION,
+    // _lib/order-move-gate.js) and its message names it.
+    const message = "Cannot send this order for approval. Blocked by: Liquidated damages: only the PO states it. Decide it on the order first.";
+    const notifyWarn = vi.fn();
+    (window as any).notifyWarn = notifyWarn;
+    const { container } = await mount(base());
+    await waitFor(() => expect(nextBtn(container)?.disabled).toBe(false));
+    update.mockImplementation(async () => {
+      throw Object.assign(new Error(message), { status: 409, body: { error: { code: "ORDER_HAS_BLOCKING_EXCEPTION", message } } });
+    });
+    const get = (window as any).AnvilBackend.orders.get;
+    const loads = get.mock.calls.length;
+    await act(async () => { fireEvent.click(nextBtn(container)!); });
+    await waitFor(() => expect(notifyWarn).toHaveBeenCalledWith("An open exception blocks this order", message));
+    expect((window as any).notifyError).not.toHaveBeenCalled();
+    expect((window as any).notifySuccess).not.toHaveBeenCalled();
+    await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(loads));
+  });
+
   it("without a note sends only the status, as before", async () => {
     const { container } = await mount(base());
     await waitFor(() => expect(nextBtn(container)?.disabled).toBe(false));

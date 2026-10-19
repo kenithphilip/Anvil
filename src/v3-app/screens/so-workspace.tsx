@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { LoadingState } from "../components/LoadingState";
-import { ageLabel, stageOf, draftLabel, approvalPatch, NO_PAYLOAD_HASH_MESSAGE, isStaleApproval, STALE_APPROVAL_MESSAGE } from "../lib/helpers";
+import { ageLabel, stageOf, draftLabel, approvalPatch, NO_PAYLOAD_HASH_MESSAGE, isStaleApproval, STALE_APPROVAL_MESSAGE, isBlockingException, BLOCKING_EXCEPTION_TITLE } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Modal, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
@@ -811,6 +811,11 @@ const WiredSOWorkspace = () => {
       if (isStaleApproval(err)) {
         window.notifyWarn?.(STALE_APPROVAL_MESSAGE, "It has been reloaded. Review it, then approve again.");
         setBump((n) => n + 1);
+      } else if (isBlockingException(err)) {
+        // 409 ORDER_HAS_BLOCKING_EXCEPTION: the server's message names the
+        // rows. Reload, so the list shows what the server read.
+        window.notifyWarn?.(BLOCKING_EXCEPTION_TITLE, err?.message || String(err));
+        setBump((n) => n + 1);
       } else {
         window.notifyError?.("Approve failed", err?.message || String(err));
       }
@@ -1080,7 +1085,12 @@ const WiredSOWorkspace = () => {
       window.notifySuccess?.("Sent for approval", o.po_number || o.id.slice(0, 8));
       setBump((n) => n + 1);
     } catch (err: any) {
-      window.notifyError?.("Could not advance status", err?.message || String(err));
+      if (isBlockingException(err)) {
+        window.notifyWarn?.(BLOCKING_EXCEPTION_TITLE, err?.message || String(err));
+        setBump((n) => n + 1);
+      } else {
+        window.notifyError?.("Could not advance status", err?.message || String(err));
+      }
     } finally {
       setBusy(null);
     }
@@ -1105,6 +1115,9 @@ const WiredSOWorkspace = () => {
     } catch (err: any) {
       if (isStaleApproval(err)) {
         window.notifyWarn?.(STALE_APPROVAL_MESSAGE, "It has been reloaded. Review it, then confirm again.");
+        setBump((n) => n + 1);
+      } else if (isBlockingException(err)) {
+        window.notifyWarn?.(BLOCKING_EXCEPTION_TITLE, err?.message || String(err));
         setBump((n) => n + 1);
       } else {
         window.notifyError?.("Could not confirm the order", err?.message || String(err));

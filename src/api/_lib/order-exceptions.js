@@ -20,8 +20,9 @@
 //                       reported it when two did
 //   severity            critical, high, warn or info (the terms vocabulary)
 //   blocks              "approval" when the server refuses approval until it
-//                       is cleared; "send" when the order should not go for
-//                       approval with it open; null otherwise
+//                       is cleared; "send" when the server refuses to send
+//                       the order for approval, or to approve it, with it
+//                       open (order-move-gate.js); null otherwise
 //   status              open, or decided elsewhere (kept, so nothing is lost)
 //   title, detail       words for a person
 //   payload             the same evidence as data: the subject, the field,
@@ -1199,7 +1200,8 @@ export const lineExceptionIndexes = (result) => {
 };
 
 // The open rows that stop the order:
-//   send      should not be sent for approval with it open
+//   send      the server refuses to send it for approval, or to approve it,
+//             with it open (order-move-gate.js)
 //   approval  the server refuses approval until an approver clears it
 export const blockingRows = (result) => {
   const rows = arr(result?.rows).filter((r) => r.blocks && !r.shadow);

@@ -170,6 +170,18 @@ export const isStaleApproval = (err: unknown): boolean => {
   return !!e && (e.body?.error?.code === STALE_APPROVAL_CODE || e.code === STALE_APPROVAL_CODE);
 };
 
+// The server refuses to send an order for approval, or to approve it, while
+// an open exception blocks the move (409 ORDER_HAS_BLOCKING_EXCEPTION in
+// src/api/orders/[id].js, _lib/order-move-gate.js). Its message names the
+// rows. Every send and approve caller shows that message and reloads, so the
+// person sees the rows the server read.
+export const BLOCKING_EXCEPTION_CODE = "ORDER_HAS_BLOCKING_EXCEPTION";
+export const BLOCKING_EXCEPTION_TITLE = "An open exception blocks this order";
+export const isBlockingException = (err: unknown): boolean => {
+  const e = err as { code?: unknown; body?: { error?: { code?: unknown } } } | null | undefined;
+  return !!e && (e.body?.error?.code === BLOCKING_EXCEPTION_CODE || e.code === BLOCKING_EXCEPTION_CODE);
+};
+
 // Order identifier resolution. Replaces the ad-hoc fallback chain
 //   o.po_number || o.quote_number || `draft ${o.id.slice(0,8)}`
 // that was inlined at ~15 call sites and gave the operator a row of

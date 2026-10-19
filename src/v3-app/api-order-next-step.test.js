@@ -75,6 +75,16 @@ describe("blockers are named from the exceptions", () => {
     expect(s.blockers.map((b) => b.key)).toEqual([modBlocker.key]);
   });
 
+  it("a send blocker still open at review stops approve too, as the server does (plan C-3)", () => {
+    const s = nextStep({ status: "PENDING_REVIEW", exceptions: [criticalTerms, modBlocker], permissions: ALL });
+    expect(s).toMatchObject({ action: "approve", enabled: false });
+    expect(s.blockers.map((b) => [b.key, b.reason])).toEqual([[criticalTerms.key, "blocks_send"], [modBlocker.key, "blocks_approval"]]);
+    // Someone without approve sees both as notes on the step they wait for.
+    const waiting = nextStep({ status: "PENDING_REVIEW", exceptions: [criticalTerms], permissions: ENGINEER });
+    expect(waiting).toMatchObject({ action: "await_approval", enabled: false, blockers: [] });
+    expect(waiting.notes.map((n) => n.key)).toEqual([criticalTerms.key]);
+  });
+
   it("shadow rows and decided rows never block", () => {
     const s = nextStep({ status: "DRAFT", exceptions: [{ ...criticalTerms, shadow: true }, { ...criticalTerms, status: "decided" }], permissions: ENGINEER });
     expect(s.enabled).toBe(true);

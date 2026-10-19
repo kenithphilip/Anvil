@@ -56,6 +56,7 @@ vi.mock("../../api/_lib/supabase.js", () => {
       select: (c?: string) => { if (op === "select") cols = c || ""; return q; },
       eq: (c: string, v: unknown) => { filters.push((r) => String(r[c]) === String(v)); return q; },
       in: (c: string, vals: unknown[]) => { filters.push((r) => vals.map(String).includes(String(r[c]))); return q; },
+      is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return q; },
       order: () => q,
       limit: () => q,
       update: (p: any) => { op = "update"; patch = p; return q; },
@@ -294,6 +295,34 @@ describe("a stale approval (plan PR 3)", () => {
     await act(async () => { fireEvent.click(within(fresh).getByTitle("Approve this order")); });
     await waitFor(() => expect(row("pa").status).toBe("APPROVED"));
     expect(orderUpdate).toHaveBeenLastCalledWith("pa", { status: "APPROVED", approval: { payloadHash: "hash-pa-v2" } });
+  });
+});
+
+describe("an open exception blocks the approval (plan C-3)", () => {
+  it("says why in the server's words, reloads the queue, and approves nothing", async () => {
+    // The terms check on, with an undecided critical flag on PO-PA.
+    Object.assign(H.tables, {
+      tenant_settings: [{ tenant_id: T, terms_check_mode: "on", terms_policy: null }],
+      order_term_checks: [{ id: "chk-1", tenant_id: T, order_id: "pa", superseded_at: null, created_at: "2026-10-02T00:00:00Z", po_terms_status: "read", po_clauses: [] }],
+      order_term_flags: [{
+        id: "fl-1", tenant_id: T, check_id: "chk-1", order_id: "pa", clause: "ld_penalty", outcome: "po_only", severity: "critical",
+        method: "rule", po: { text: "LD at 2% per week, no cap." }, quote: null, baseline: null, created_at: "2026-10-02T00:00:00Z",
+      }],
+      order_term_decisions: [],
+    });
+    await renderQueue();
+    const loads = listQueue.mock.calls.length;
+    const pa = screen.getByTestId("approvals-row-pa");
+    await act(async () => { fireEvent.click(within(pa).getByTitle("Approve PO-PA")); });
+    await act(async () => { fireEvent.click(within(pa).getByTitle("Confirm: approve PO-PA")); });
+
+    await waitFor(() => expect((window as any).notifyWarn).toHaveBeenCalledWith(
+      "An open exception blocks this order",
+      "PO-PA: Cannot approve this order. Blocked by: Liquidated damages: only the PO states it. Decide it on the order first."));
+    expect((window as any).notifyError).not.toHaveBeenCalled();
+    expect(row("pa").status).toBe("PENDING_REVIEW");
+    expect(approvalRow("qa-1").status).toBe("PENDING");
+    await waitFor(() => expect(listQueue.mock.calls.length).toBeGreaterThan(loads));
   });
 });
 

@@ -267,6 +267,27 @@ describe("a re-run on the same payload hash is a no-op", () => {
     expect(mod).toHaveLength(1);
   });
 
+  it("drops the -MOD finding once the final part number replaces the provisional one", async () => {
+    seed([inboundOrder({ rule_findings: [{ code: "line_count_shortfall", rule_id: "line_count_shortfall", blocks: true, resolved: false, source: "extraction", detail: "PO declares 4; extracted 3" }] })]);
+    H.db.tables.quote_lines.push({ quote_id: "q1", tenant_id: TENANT, line_index: 2, part_no: "PART-C-MOD", description: "Test guide", qty: 1, discounted_unit_price: 10 });
+    const lines = [...PO_LINES, { line_no: 3, partNumber: "PART-C-MOD", description: "Test guide", quantity: 1, unitPrice: 10 }];
+    await call(patchOrder, { method: "PATCH", query: { id: ORDER }, _body: { result: { salesOrder: { lineItems: lines } } } });
+    // The coded findings; the anomaly rules' own flags carry a key instead.
+    const codes = () => orderRow().rule_findings.map((f) => f.code || f.rule_id).filter(Boolean).sort();
+    expect(codes()).toEqual(["line_count_shortfall", "mod_quote_bom_pending"]);
+
+    // Design supplied the final number: the quote and the PO line carry it.
+    H.db.tables.quote_lines.find((l) => l.part_no === "PART-C-MOD").part_no = "PART-C";
+    const final = clone(orderRow().result);
+    final.salesOrder.lineItems[2].partNumber = "PART-C";
+    await call(patchOrder, { method: "PATCH", query: { id: ORDER }, _body: { result: final } });
+
+    expect(reconAudits()).toHaveLength(2);
+    expect(orderRow().result.quoteReconciliation.mod_bom.final_bom_present).toBe(true);
+    // The -MOD finding is gone; the other blocker is not touched.
+    expect(codes()).toEqual(["line_count_shortfall"]);
+  });
+
   it("the screen's own reconcile button still forces a run", async () => {
     // A newly attached quote changes the answer without changing the PO.
     await call(patchOrder, { method: "PATCH", query: { id: ORDER }, _body: { result: { salesOrder: { lineItems: PO_LINES } } } });

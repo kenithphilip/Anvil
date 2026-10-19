@@ -12,6 +12,7 @@ import { computeOrderPayloadHash } from "../_lib/payload-hash.js";
 import { autoReconcileOrder, hasReconcilableLines, AUTO_RECONCILE_STATUSES } from "../_lib/order-reconcile.js";
 import { hasUnresolvedBlocker, firstUnresolvedBlocker, mergeBlockersForward, resolveFinding } from "../_lib/blocking-findings.js";
 import { IDENTITY_KEYS, planIdentityEdit } from "../_lib/order-identity.js";
+import { checkMoveBlockers } from "../_lib/order-move-gate.js";
 
 const APPROVE_INPUTS = [
   "status", "approval", "payload_hash", "result",
@@ -159,9 +160,10 @@ export default async function handler(req, res) {
         return json(res, 200, { order: rf });
       }
 
-      // CM P3b: a routine rule_findings overwrite (e.g. the "Run validation"
-      // step) must NOT silently drop an unresolved extraction blocker — carry it
-      // forward so the only way to clear it is the explicit resolve above.
+      // CM P3b: a routine rule_findings overwrite (e.g. the "Re-run checks"
+      // step) must NOT silently drop an unresolved blocker (the extraction
+      // shortfall, the -MOD finding): carry it forward so the only way to
+      // clear it is the explicit resolve above.
       if ("rule_findings" in body) patch.rule_findings = mergeBlockersForward(body.rule_findings, prev.rule_findings);
 
       // Audit P1.5 (May 2026): block transitions that skip the
@@ -235,6 +237,20 @@ export default async function handler(req, res) {
         patch.approval_actions = Array.isArray(body.approval.approvedActions) && body.approval.approvedActions.length
           ? body.approval.approvedActions
           : ["approve", "export_tally", "create_source_pos", "send_customer_ack"];
+      }
+      // Plan R-F1 (c): a move to PENDING_REVIEW or APPROVED is refused while
+      // an open exception blocks it, so the Kanban, the Approvals queue and a
+      // direct call meet the rule the workspace's button shows. The list is
+      // built from the order as this PATCH leaves it, with the builder and
+      // the input reader the workspace's list uses. Nothing is written. Every
+      // approve is gated, a re-approval from FAILED_TALLY_IMPORT or of an
+      // APPROVED order included; a send only when the status changes. See
+      // _lib/order-move-gate.js.
+      const gatedMove = body.status === "APPROVED"
+        || (body.status === "PENDING_REVIEW" && prev.status !== "PENDING_REVIEW");
+      if (gatedMove) {
+        const refused = await checkMoveBlockers(svc, ctx, { order: { ...prev, ...patch }, to: body.status });
+        if (refused) return json(res, refused.status, refused.body);
       }
       // Editing a critical field invalidates approval. rule_findings
       // was added May 2026 (audit P0): an approved order that the

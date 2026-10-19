@@ -24,7 +24,13 @@
 // when a provider accepted the message. When it was not sent, the quote
 // keeps its status (so it can be sent again) and the email row is marked
 // failed, not left queued: the reaper must never send a stale quote
-// later, or send it twice after the operator retries.
+// later, or send it twice after the operator retries. The accept token
+// minted for an attempt that was not sent is revoked.
+//
+// When the email left but the SENT update fails (twice), the response
+// is still sent: true, with a `warning` and a quote_send_status_update_failed
+// audit row, and a later send of the same quote is refused with 409
+// QUOTE_ALREADY_EMAILED instead of emailing the customer again.
 //
 // Reuses the same portal-token + signed-URL machinery that
 // invoices/send (Phase 2 P2.7) shipped.
@@ -39,7 +45,7 @@ import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "..
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 import { belowFloorLines } from "../_lib/quote-margin.js";
 import { commsRow } from "../_lib/comms-row.js";
-import { sendCommunication, notSentReason } from "../_lib/comms-send.js";
+import { sendCommunication, notSentReason, failUnsentRow } from "../_lib/comms-send.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60;
 const PORTAL_TOKEN_TTL_DAYS = 30;
@@ -181,6 +187,28 @@ export default async function handler(req, res) {
     const quote = qQ.data;
     if (!["DRAFT", "PENDING_INTERNAL_APPROVAL"].includes(quote.status)) {
       return json(res, 409, { error: { message: "Cannot send a quote in status " + quote.status } });
+    }
+
+    // The email for this quote already left once, but the quote did not
+    // move to SENT (the status update failed after the provider accepted
+    // the email). The status check above cannot see that, so without this
+    // a retry would email the customer a second time.
+    const prior = await svc.from("communications").select("id, sent_at")
+      .eq("tenant_id", ctx.tenantId)
+      .eq("object_type", "quote")
+      .eq("object_id", quote.id)
+      .eq("document_type", "quote_email")
+      .in("status", ["sent", "replied"])
+      .limit(1);
+    if (prior.error) throw new Error("communications read: " + prior.error.message);
+    const priorSent = (prior.data || [])[0];
+    if (priorSent) {
+      return json(res, 409, { error: {
+        code: "QUOTE_ALREADY_EMAILED",
+        message: "This quote was already emailed to the customer" + (priorSent.sent_at ? " (" + priorSent.sent_at + ")" : "")
+          + ", but its status did not change to SENT. It was not sent again. Mark it SENT instead.",
+        communication_id: priorSent.id,
+      } });
     }
 
     // Margin-floor guard. This endpoint is already approver-gated, so a
@@ -374,15 +402,19 @@ export default async function handler(req, res) {
       // "Send to customer". A row left queued (no provider configured)
       // would be fired later by the agents/run reaper, days stale, and a
       // retry here would then reach the customer twice. Mark it failed.
-      let finalStatus = commStatus;
-      if (commStatus === "queued") {
-        const fail = await svc.from("communications").update({
-          status: "failed",
-          updated_at: new Date().toISOString(),
-          metadata: { ...(result?.communication?.metadata || draft.data.metadata || {}), not_sent_reason: error },
-        }).eq("tenant_id", ctx.tenantId).eq("id", draft.data.id).eq("status", "queued");
-        if (fail?.error) throw new Error("comm not-sent update: " + fail.error.message);
-        finalStatus = "failed";
+      const fin = await failUnsentRow(svc, ctx, draft.data.id, result, error);
+      if (fin.error) throw new Error("comm not-sent update: " + fin.error);
+      const finalStatus = fin.status || commStatus;
+      // The accept link minted above was never delivered. Revoke it, so
+      // failed attempts do not leave live 30-day accept tokens behind.
+      // Best-effort: the email did not go, so nobody holds this token.
+      let portalRevoked = false;
+      if (portal?.id) {
+        try {
+          const rv = await svc.from("portal_tokens").update({ revoked_at: new Date().toISOString() })
+            .eq("tenant_id", ctx.tenantId).eq("id", portal.id);
+          portalRevoked = !rv?.error;
+        } catch { portalRevoked = false; }
       }
       await recordAudit(ctx, {
         action: "quote_send_failed",
@@ -398,8 +430,9 @@ export default async function handler(req, res) {
         provider: result?.provider || null,
         communication_id: draft.data.id,
         share_url: shareUrl,
-        portal_url: portal?.url || null,
+        portal_url: null,
         portal_token_id: portal?.id || null,
+        portal_token_revoked: portalRevoked,
         portal_token_error: portal?.error || null,
         pdf_error: pdfError,
         quote,
@@ -420,9 +453,14 @@ export default async function handler(req, res) {
     // The email left: flip the quote to SENT, populate sent_at +
     // expires_at + sent_via, persist the payload_hash so
     // portal/accept_quote can verify on click.
+    //
+    // The customer already has the email, so a failed update must not
+    // answer 500: the quote would still read DRAFT and the operator would
+    // send it again. Retry once. If it still fails, report the send with a
+    // warning and an audit row; the guard at the top then refuses a resend.
     const validityDays = quote.validity_days || 30;
     const expiresAt = new Date(Date.now() + validityDays * 86400 * 1000).toISOString();
-    const upd = await svc.from("quotes").update({
+    const flipToSent = () => svc.from("quotes").update({
       status: "SENT",
       sent_at: new Date().toISOString(),
       sent_via: "email",
@@ -430,7 +468,21 @@ export default async function handler(req, res) {
       payload_hash: payloadHash,
       updated_at: new Date().toISOString(),
     }).eq("tenant_id", ctx.tenantId).eq("id", quote.id).select("*").single();
-    if (upd.error) throw new Error("quote SENT update: " + upd.error.message);
+    let upd = await flipToSent();
+    if (upd.error) upd = await flipToSent();
+    let warning = null;
+    if (upd.error) {
+      warning = "The email was sent, but the quote's status could not be changed to SENT ("
+        + upd.error.message + "). Do not send it again; mark it SENT.";
+      await recordAudit(ctx, {
+        action: "quote_send_status_update_failed",
+        objectType: "quote",
+        objectId: quote.id,
+        detail: recipient.email + " :: v" + quote.version + " :: " + upd.error.message,
+        payloadHash,
+      });
+    }
+    const quoteNow = upd.error ? quote : upd.data;
 
     // Layer B (item-mapping automation): learn from quote SENT.
     // The operator has vetted every line in the recon-table step
@@ -534,13 +586,16 @@ export default async function handler(req, res) {
     // nudge this quote toward acceptance and warn before expiry.
     // The handlers themselves shipped in Phase 6 (P6.x); the goals
     // were never created because no caller upstream persisted an
-    // agent_goals row.
-    const armed = await armQuoteAgentGoals(svc, {
-      tenantId: ctx.tenantId,
-      quote: upd.data,
-      expiresAt,
-      ownerUserId: ctx.user?.id || null,
-    });
+    // agent_goals row. Not armed when the quote did not reach SENT: the
+    // goals follow up a SENT quote.
+    const armed = upd.error
+      ? { goals: [] }
+      : await armQuoteAgentGoals(svc, {
+        tenantId: ctx.tenantId,
+        quote: quoteNow,
+        expiresAt,
+        ownerUserId: ctx.user?.id || null,
+      });
     if (armed.error) {
       // Non-fatal: the send already happened. Surface in audit so
       // ops can see which arming path failed without blocking the
@@ -578,6 +633,7 @@ export default async function handler(req, res) {
       sent: true,
       status: commStatus,
       error: null,
+      warning,
       provider: result?.provider || null,
       communication_id: draft.data.id,
       share_url: shareUrl,
@@ -585,7 +641,7 @@ export default async function handler(req, res) {
       portal_token_id: portal?.id || null,
       portal_token_error: portal?.error || null,
       pdf_error: pdfError,
-      quote: upd.data,
+      quote: quoteNow,
       armed_goals: armed.error ? [] : armed.goals,
       margin_floor_override: belowFloor.length > 0,
     });

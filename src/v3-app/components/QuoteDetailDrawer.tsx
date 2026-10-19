@@ -387,6 +387,9 @@ export const QuoteDetailDrawer: React.FC<{
       const next = resp?.quote || resp;
       if (next?.status) setDraft((d: Quote) => ({ ...d, status: next.status, version: next.version ?? d.version }));
       if (resp?.margin_floor_override) window.notifyWarn?.("Sent below margin floor", "Recorded for approval review");
+      // The email left but the server could not finish (for example the
+      // quote did not move to SENT). Say so next to the success.
+      if (resp?.warning) window.notifyWarn?.("Sent, but not finished", String(resp.warning));
       window.notifySuccess?.(okMsg, draft.quote_number || quote.id?.slice(0, 8));
       onSaved?.();
     } catch (e: any) {

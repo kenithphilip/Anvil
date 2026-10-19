@@ -4,7 +4,9 @@
 // console.warn, which reaches the log drain and nobody in the app. While the
 // tick is down, background extraction, inbound email, ERP retries and agent
 // runs all wait. Now the sweep also writes one admin bell row per tenant,
-// through notifyAdmins. Bell only: no email is sent for this.
+// through notifyAdmins. Bell only: no email is sent for this. It also rings
+// when cron/tick has no row at all while cron/daily has one (a deployment
+// whose 5-minute trigger was never set up).
 //
 // Runs the real daily handler, heartbeat check and notifyAdmins. The daily
 // sub-handlers (runCronGroup) and the database are faked. Invented fixtures.
@@ -101,6 +103,33 @@ describe("cron/daily: a stale tick rings the admin bell", () => {
     expect(bells()[0].body).toContain("last ran 42 minutes ago");
     // Bell only: no email row.
     expect(H.store.communications).toEqual([]);
+  });
+
+  it("keys the bell to the day, so the next day's sweep rings again", async () => {
+    H.store.cron_health.push({ worker: "cron/tick", last_run_at: minutesAgo(42), last_status: "ok" });
+    await runDaily();
+    const today = new Date().toISOString().slice(0, 10);
+    expect(bells().map((b) => b.link_params.dedup_key)).toEqual(["cron_tick_stale:" + today, "cron_tick_stale:" + today]);
+  });
+
+  it("rings when there is no record of the tick at all, on a deployment whose daily path writes heartbeats", async () => {
+    // A new deployment whose external 5-minute trigger was never set up:
+    // cron/daily has a row, cron/tick has none.
+    const r = await runDaily();
+    expect(r.status).toBe(200);
+    expect(r.body.staleness_bell).toMatchObject({ tenants: 3, notified: 2 });
+    expect(bells().map((b) => b.tenant_id).sort()).toEqual(["t-1", "t-2"]);
+    expect(bells()[0].title).toBe("The background worker has not run");
+    expect(bells()[0].body).toContain("no record of the 5-minute worker (cron/tick) running");
+    expect(H.store.communications).toEqual([]);
+  });
+
+  it("rings nothing when cron_health holds no daily row either (nothing is being recorded)", async () => {
+    H.store.cron_health = [];
+    const r = await runDaily();
+    expect(r.status).toBe(200);
+    expect(r.body.staleness_bell).toEqual({ tenants: 0, notified: 0 });
+    expect(bells()).toEqual([]);
   });
 
   it("rings nothing while the tick is fresh", async () => {

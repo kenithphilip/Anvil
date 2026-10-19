@@ -45,6 +45,18 @@ describe("QuoteHistoryTab", () => {
     expect(await findByText(/DRAFT > SENT/)).toBeTruthy();
   });
 
+  it("names a failed send and a send whose status did not update, in warning colours", async () => {
+    installBackend({ audit: { list: vi.fn(async () => ({ events: [
+      { id: "f1", action: "quote_send_failed", created_at: new Date().toISOString(), detail: "ops@customer.example :: v1 :: No provider is configured" },
+      { id: "f2", action: "quote_send_status_update_failed", created_at: new Date().toISOString(), detail: "ops@customer.example :: v2 :: timeout" },
+    ] })) } });
+    const { findByText, getByText } = render(<QuoteHistoryTab quoteId="q-1" />);
+    const failed = await findByText("Send failed");
+    expect(failed.className).toContain("bad");
+    const partial = getByText("Sent, status not updated");
+    expect(partial.className).toContain("warn");
+  });
+
   it("shows an empty-state when there are no events", async () => {
     installBackend({ audit: { list: vi.fn(async () => ({ events: [] })) } });
     const { findByText } = render(<QuoteHistoryTab quoteId="q-1" />);

@@ -336,4 +336,18 @@ describe("QuoteDetailDrawer: Send to customer shows the server's result", () => 
     expect(notifyError).not.toHaveBeenCalled();
     await waitFor(() => expect(queryByText("Send to customer")).toBeNull());
   });
+
+  it("shows the server's warning when the email left but the quote did not reach SENT", async () => {
+    const notifyWarn = vi.fn();
+    (window as any).notifyWarn = notifyWarn;
+    const warning = "The email was sent, but the quote's status could not be changed to SENT (statement timeout). Do not send it again; mark it SENT.";
+    (window as any).AnvilBackend.quotes.sendQuote = vi.fn(async (id: string) => ({
+      ok: true, sent: true, status: "sent", error: null, warning,
+      quote: { id, status: "DRAFT" },
+    }));
+    const { getByText } = render(<QuoteDetailDrawer quote={QUOTE} onClose={() => undefined} />);
+    fireEvent.click(getByText("Send to customer"));
+    await waitFor(() => expect(notifyWarn).toHaveBeenCalledWith("Sent, but not finished", warning));
+    expect(notifySuccess).toHaveBeenCalledWith("Quote sent to customer", "Q-202605-0001");
+  });
 });

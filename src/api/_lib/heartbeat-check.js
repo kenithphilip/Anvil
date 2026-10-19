@@ -122,11 +122,25 @@ const MAX_TENANTS_BELLED = 1000;
 // no email. The daily sweep calls this once a day; notifyAdmins drops a
 // repeat with the same key inside five minutes, and the key carries the day.
 // Never throws: a failure here must not fail the daily cron.
+//
+// It also rings when cron_health has no cron/tick row at all while the
+// daily row is there. That is the likely state of a new deployment whose
+// external 5-minute trigger was never set up: the daily path writes its
+// heartbeats, so cron_health works, and the tick has simply never run.
+// With no cron/daily row either, cron_health itself is not being written,
+// and nothing here can tell a dead tick from a missing table.
 export const bellStaleTick = async (svc, summary) => {
-  if (!summary || !summary.tick_stale) return { tenants: 0, notified: 0 };
+  if (!summary) return { tenants: 0, notified: 0 };
+  const neverRan = !summary.tick_known && !!summary.daily_known;
+  if (!summary.tick_stale && !neverRan) return { tenants: 0, notified: 0 };
   try {
     const tick = (summary.workers || []).find((w) => w.worker === "cron/tick") || {};
     const minutes = Math.round((Number(tick.age_seconds) || 0) / 60);
+    const body = neverRan
+      ? "There is no record of the 5-minute worker (cron/tick) running. "
+        + "Background extraction, inbound email, ERP retries and agent runs wait until it runs."
+      : "The 5-minute worker (cron/tick) last ran " + minutes + " minutes ago. "
+        + "Background extraction, inbound email, ERP retries and agent runs wait until it runs again.";
     const tenants = await svc.from("tenants").select("id").limit(MAX_TENANTS_BELLED);
     if (tenants.error) return { tenants: 0, notified: 0, error: tenants.error.message };
     const day = new Date().toISOString().slice(0, 10);
@@ -135,9 +149,8 @@ export const bellStaleTick = async (svc, summary) => {
       if (!t || !t.id) continue;
       const r = await notifyAdmins(svc, t.id, {
         kind: STALE_TICK_BELL_KIND,
-        title: "The background worker has stopped running",
-        body: "The 5-minute worker (cron/tick) last ran " + minutes + " minutes ago. "
-          + "Background extraction, inbound email, ERP retries and agent runs wait until it runs again.",
+        title: neverRan ? "The background worker has not run" : "The background worker has stopped running",
+        body,
         object_type: "cron_worker",
       }, { roles: ["admin"], dedupKey: "cron_tick_stale:" + day });
       notified += Number(r && r.notified) || 0;

@@ -16,6 +16,7 @@
 import { notifyAdmins } from "../notifications.js";
 import { commsRow } from "../comms-row.js";
 import { alertRecipientsForRoles } from "../internal-recipients.js";
+import { makeAlertEmailBudget } from "../alert-email-budget.js";
 
 // Who receives the bell and the alert email: the tenant's admins (the
 // notifyAdmins default, now named so the two stay the same audience).
@@ -86,13 +87,20 @@ export const dispatchNotifications = async (svc, tenantId) => {
   const todays = (open.data || []).filter((e) => e.detail?.notified?.voice_at && new Date(e.detail.notified.voice_at) > sinceMidnight);
   let voiceCallsToday = todays.length;
 
-  let bellSent = 0, emailQueued = 0, emailSkipped = 0, voiceCalls = 0;
+  let bellSent = 0, emailQueued = 0, emailSkipped = 0, emailCapped = 0, voiceCalls = 0;
   // Alert email recipients, resolved once per run, not once per exception.
   let recipients = null;
   const recipientsFor = (roles) => {
     if (!recipients) recipients = alertRecipientsForRoles(svc, tenantId, roles);
     return recipients;
   };
+  // Addressed alert emails per run and per tenant per day. Fingerprints carry
+  // the day and nothing auto-resolves, so a part that stays short opens a new
+  // exception, and wanted a new email, every day.
+  const emailBudget = makeAlertEmailBudget(svc, tenantId, "inventory_alert", {
+    perRun: process.env.INVENTORY_MAX_ALERT_EMAILS_PER_RUN,
+    perDay: process.env.INVENTORY_MAX_ALERT_EMAILS_PER_DAY,
+  });
   for (const e of (open.data || [])) {
     const already = e.detail?.notified || {};
     const isHigh = e.severity === "critical" || e.severity === "bad";
@@ -119,15 +127,22 @@ export const dispatchNotifications = async (svc, tenantId) => {
     // communications.send rail, to the same roles the bell goes to.
     // The row used to be queued with no recipient at all, so the reaper
     // failed every one. When no approved member of those roles has an
-    // address, no row is written and the reason is stamped instead.
+    // address, no row is written and the reason is stamped instead. Past
+    // the per-day cap the exception is stamped email_skipped "daily_cap"
+    // (its bell still rang); past the per-run cap it waits for a later run.
     if (!already.email_at && isHigh) {
       try {
         const to = await recipientsFor(ALERT_ROLES);
+        const gate = to ? await emailBudget.check() : null;
         if (!to) {
           already.email_at = new Date().toISOString();
           already.email_skipped = "no_recipients";
           emailSkipped += 1;
-        } else {
+        } else if (gate === "daily_cap") {
+          already.email_at = new Date().toISOString();
+          already.email_skipped = "daily_cap";
+          emailCapped += 1;
+        } else if (gate === "ok") {
           await svc.from("communications").insert(commsRow({
             tenant_id: tenantId,
             direction: "outbound",
@@ -141,6 +156,7 @@ export const dispatchNotifications = async (svc, tenantId) => {
             object_type: "inventory_exception",
             object_id: e.id,
           }));
+          emailBudget.spend();
           already.email_at = new Date().toISOString();
           emailQueued += 1;
         }
@@ -173,5 +189,5 @@ export const dispatchNotifications = async (svc, tenantId) => {
       await svc.from("inventory_exceptions").update({ detail: nextDetail }).eq("id", e.id);
     }
   }
-  return { bellSent, emailQueued, emailSkipped, voiceCalls, threshold, maxPerDay };
+  return { bellSent, emailQueued, emailSkipped, emailCapped, voiceCalls, threshold, maxPerDay };
 };

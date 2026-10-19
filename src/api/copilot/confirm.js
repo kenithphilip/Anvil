@@ -14,7 +14,7 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { consumeProposal, cancelProposal, setProposalResult } from "../_lib/action-proposals.js";
-import { sendCommunication, notSentReason } from "../_lib/comms-send.js";
+import { sendCommunication, notSentReason, failUnsentRow } from "../_lib/comms-send.js";
 import { enqueueTallyVoucher } from "../_lib/tally-enqueue.js";
 import { commsRow } from "../_lib/comms-row.js";
 
@@ -64,12 +64,27 @@ const executeAction = async (svc, ctx, proposal) => {
     // refusal, or a channel such as Teams that cannot send).
     const status = sent.communication?.status || draft.data.status;
     const delivered = status === "sent";
+    if (delivered) {
+      return {
+        communication: sent.communication,
+        provider: sent.provider || "manual",
+        configured: sent.configured,
+        sent: true,
+        send_error: null,
+      };
+    }
+    // Not sent, and Ask Anvil says so. A row left queued (no provider) would
+    // be delivered later by the agents/run reaper, after the user was told
+    // it did not go. Mark it failed, as quote send does.
+    let reason = notSentReason(sent);
+    const fin = await failUnsentRow(svc, ctx, draft.data.id, sent, reason);
+    if (fin.error) reason += " It is still queued, so the background worker may send it later.";
     return {
-      communication: sent.communication || draft.data,
+      communication: { ...(sent.communication || draft.data), status: fin.status || status },
       provider: sent.provider || "manual",
       configured: sent.configured,
-      sent: delivered,
-      send_error: delivered ? null : notSentReason(sent),
+      sent: false,
+      send_error: reason,
     };
   }
 

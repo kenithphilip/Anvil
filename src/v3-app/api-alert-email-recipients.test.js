@@ -10,7 +10,7 @@
 // Runs the real dispatchers, notifyAdmins and the real resolver. Only the
 // database and the auth user lookup are faked. Invented fixtures.
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { dispatchLogisticsNotifications } from "../api/_lib/logistics/notifications.js";
 import { dispatchNotifications } from "../api/_lib/inventory/notifications.js";
 
@@ -164,5 +164,98 @@ describe("inventory alert email", () => {
     expect(out.emailQueued).toBe(0);
     expect(out.emailSkipped).toBe(1);
     expect(store.inventory_exceptions[0].detail.notified.email_skipped).toBe("no_recipients");
+  });
+
+  it("with two admins, goes To the first and CC the second", async () => {
+    users["u-admin2"] = { email: "Second.Admin@seller.test" };
+    store.tenant_members = [member("u-admin", "admin"), member("u-admin2", "admin"), member("u-proc", "procurement")];
+    store.inventory_exceptions = [inventoryException("ix-1")];
+    await dispatchNotifications(makeSvc(), "t-1");
+
+    expect(comms()).toHaveLength(1);
+    expect(comms()[0].to_addr).toBe("admin@seller.test");
+    expect(comms()[0].cc_addrs).toEqual(["second.admin@seller.test"]);
+  });
+});
+
+// The alert email had no backlog control once it was addressed: each
+// exception queued its own email to every member of the alert roles.
+describe("alert email volume", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  const alreadyBelled = (id) => ({ ...logisticsException(id), detail: { notified: { bell_at: "2026-10-15T09:01:00Z" } } });
+
+  it("a logistics backlog that the digest belled sends no per-exception email", async () => {
+    store.tenant_members = [member("u-proc", "procurement"), member("u-admin", "admin")];
+    // More first-time exceptions than the digest threshold (10).
+    store.logistics_exceptions = Array.from({ length: 12 }, (_, i) => logisticsException("lx-" + i));
+    const out = await dispatchLogisticsNotifications(makeSvc(), "t-1");
+
+    expect(out.digested).toBe(12);
+    expect(store.admin_notifications.filter((n) => n.kind === "logistics_exception_digest")).toHaveLength(1);
+    expect(comms()).toEqual([]);
+    expect(out.emailQueued).toBe(0);
+    for (const e of store.logistics_exceptions) {
+      expect(e.detail.notified).toMatchObject({ via: "digest", email_skipped: "digested" });
+      expect(e.detail.notified.email_at).toBeTruthy();
+    }
+  });
+
+  it("logistics sends at most the per-run cap and leaves the rest for the next run, unstamped", async () => {
+    vi.stubEnv("LOGISTICS_MAX_ALERT_EMAILS_PER_RUN", "2");
+    store.tenant_members = [member("u-admin", "admin")];
+    store.logistics_exceptions = [alreadyBelled("lx-1"), alreadyBelled("lx-2"), alreadyBelled("lx-3")];
+    const out = await dispatchLogisticsNotifications(makeSvc(), "t-1");
+
+    expect(out.emailQueued).toBe(2);
+    expect(comms().map((c) => c.object_id)).toEqual(["lx-1", "lx-2"]);
+    expect(store.logistics_exceptions[2].detail.notified.email_at).toBeUndefined();
+
+    // The next run sends the one that waited.
+    const next = await dispatchLogisticsNotifications(makeSvc(), "t-1");
+    expect(next.emailQueued).toBe(1);
+    expect(comms().map((c) => c.object_id)).toEqual(["lx-1", "lx-2", "lx-3"]);
+  });
+
+  it("logistics stops at the per-day cap and stamps the exception daily_cap, so it leaves the query", async () => {
+    vi.stubEnv("LOGISTICS_MAX_ALERT_EMAILS_PER_DAY", "2");
+    store.tenant_members = [member("u-admin", "admin")];
+    // Two alert emails already queued today.
+    store.communications = [
+      { id: "old-1", tenant_id: "t-1", template_code: "logistics_alert", status: "sent" },
+      { id: "old-2", tenant_id: "t-1", template_code: "logistics_alert", status: "queued" },
+      // Another tenant's and another template's rows do not count.
+      { id: "other-t", tenant_id: "t-2", template_code: "logistics_alert", status: "sent" },
+      { id: "other-k", tenant_id: "t-1", template_code: "inventory_alert", status: "sent" },
+    ];
+    store.logistics_exceptions = [alreadyBelled("lx-1")];
+    const out = await dispatchLogisticsNotifications(makeSvc(), "t-1");
+
+    expect(out.emailQueued).toBe(0);
+    expect(out.emailCapped).toBe(1);
+    expect(comms()).toHaveLength(4);
+    expect(store.logistics_exceptions[0].detail.notified).toMatchObject({ email_skipped: "daily_cap" });
+    expect(store.logistics_exceptions[0].detail.notified.email_at).toBeTruthy();
+  });
+
+  it("inventory sends at most the per-run cap; past the per-day cap it stamps daily_cap", async () => {
+    vi.stubEnv("INVENTORY_MAX_ALERT_EMAILS_PER_RUN", "2");
+    vi.stubEnv("INVENTORY_MAX_ALERT_EMAILS_PER_DAY", "3");
+    store.tenant_members = [member("u-admin", "admin")];
+    store.inventory_exceptions = ["ix-1", "ix-2", "ix-3", "ix-4"].map(inventoryException);
+
+    const first = await dispatchNotifications(makeSvc(), "t-1");
+    expect(first.emailQueued).toBe(2);
+    expect(store.inventory_exceptions.filter((e) => e.detail.notified.email_at)).toHaveLength(2);
+
+    // Second run: one left for today, then the cap.
+    const second = await dispatchNotifications(makeSvc(), "t-1");
+    expect(second.emailQueued).toBe(1);
+    expect(second.emailCapped).toBe(1);
+    expect(comms().filter((c) => c.template_code === "inventory_alert")).toHaveLength(3);
+    const capped = store.inventory_exceptions.filter((e) => e.detail.notified.email_skipped === "daily_cap");
+    expect(capped.map((e) => e.id)).toEqual(["ix-4"]);
+    // The capped exception still rang the bell.
+    expect(capped[0].detail.notified.bell_at).toBeTruthy();
   });
 });

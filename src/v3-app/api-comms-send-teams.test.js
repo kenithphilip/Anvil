@@ -144,13 +144,19 @@ describe("POST /api/copilot/confirm: draft_and_send_comms reports whether it was
     expect(H.store.communications.filter((c) => c.status === "sent")).toEqual([]);
   });
 
-  it("an email with no mail provider configured returns sent: false, never sent", async () => {
+  it("an email with no mail provider configured returns sent: false, and the row is failed, not left queued", async () => {
     H.sendEmail = vi.fn(async () => ({ ok: false, provider: null, skipped: true, reason: "not_configured" }));
     const token = await propose({ channel: "email", to_addr: "buyer@acme.test", subject: "Hi", body: "Hello" });
     const r = await confirm(token);
     expect(r.body.result.sent).toBe(false);
     expect(r.body.result.send_error).toMatch(/No provider is configured/);
-    expect(r.body.result.communication.status).toBe("queued");
+    expect(r.body.result.communication.status).toBe("failed");
+    // Ask Anvil told the user it was not sent. The agents/run reaper drains
+    // status = 'queued' only, so a queued row would be delivered later anyway.
+    const row = H.store.communications.find((c) => c.id === r.body.result.communication.id);
+    expect(row.status).toBe("failed");
+    expect(row.metadata.not_sent_reason).toMatch(/No provider is configured/);
+    expect(H.store.communications.filter((c) => c.status === "queued")).toEqual([]);
   });
 
   it("an email a provider accepted returns sent: true and no error", async () => {

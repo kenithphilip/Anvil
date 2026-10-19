@@ -8,13 +8,18 @@ import { lineCandidates, lineSapCandidates } from "../_lib/item-mapper.js";
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 import { promoteApprovedOrder } from "../eval/promote.js";
 import { requireOrderPatchAction } from "../_lib/order-write-gate.js";
-import { payloadHashAfterWrite } from "../_lib/payload-hash.js";
+import { computeOrderPayloadHash, payloadHashAfterWrite } from "../_lib/payload-hash.js";
 import { autoReconcileOrder, hasReconcilableLines, AUTO_RECONCILE_STATUSES } from "../_lib/order-reconcile.js";
 import { hasUnresolvedBlocker, firstUnresolvedBlocker, mergeBlockersForward, resolveFinding } from "../_lib/blocking-findings.js";
 import { IDENTITY_KEYS, planIdentityEdit } from "../_lib/order-identity.js";
 
+// payload_hash is not here. It is what an approver's hash is checked against,
+// so the server is its only writer (the stamp below, the quote reconcile, the
+// background writeback). A client that sent one could reset it to the value a
+// stale view loaded, and the STALE_APPROVAL check would never fire. No screen
+// sends it.
 const APPROVE_INPUTS = [
-  "status", "approval", "payload_hash", "result",
+  "status", "approval", "result",
   "rule_findings", "anomaly_flags", "evidence_by_field", "line_edits",
   "blocker_summary", "format_change_summary", "cost_avoided_reason",
   "api_usage", "token_estimate",
@@ -215,6 +220,20 @@ export default async function handler(req, res) {
             error: {
               code: "STALE_APPROVAL",
               message: "This order changed since you opened it. Reload it and review it again before you approve.",
+            },
+          });
+        }
+        // An approval binds to lines that are already stored and that the
+        // approver loaded. One PATCH that approves and changes the lines would
+        // approve lines nobody reviewed, and the hash would move off the one
+        // the approval names in the same write. Save, reload, then approve.
+        // Re-sending the same lines is not a change. (planIdentityEdit above
+        // already refuses identity keys in an approve.)
+        if ("result" in patch && computeOrderPayloadHash({ ...prev, ...patch }) !== computeOrderPayloadHash(prev)) {
+          return json(res, 409, {
+            error: {
+              code: "APPROVE_WITH_CHANGES",
+              message: "This request changes the order's lines and approves it at once. Save the changes, reload the order, then approve it.",
             },
           });
         }
@@ -436,11 +455,23 @@ export default async function handler(req, res) {
       // hash covers the customer, so the reconcile's once-per-hash guard
       // lets it run.
       const customerChanged = !!identity?.customerChanged;
+      let order = data;
       if (("result" in body || customerChanged) && AUTO_RECONCILE_STATUSES.has(data.status) && hasReconcilableLines(data)) {
-        await autoReconcileOrder(svc, ctx, data.id, { trigger: customerChanged ? "customer_changed" : "lines_changed" });
+        const rec = await autoReconcileOrder(svc, ctx, data.id, { trigger: customerChanged ? "customer_changed" : "lines_changed" });
+        // A reconcile that filled a line moved the hash after the write above.
+        // Return the order as it now stands, so a caller that approves from
+        // this response (an agent following order-next-step) sends the stored
+        // hash, not one that is already stale. Best-effort: on a failed read
+        // the written row stands, and an approve from it fails closed (409).
+        if (rec?.status === "reconciled") {
+          try {
+            const fresh = await svc.from("orders").select("*").eq("tenant_id", ctx.tenantId).eq("id", id).maybeSingle();
+            if (!fresh.error && fresh.data) order = fresh.data;
+          } catch { /* the written row stands */ }
+        }
       }
 
-      return json(res, 200, { order: data, approvals_created: approvalsCreated });
+      return json(res, 200, { order, approvals_created: approvalsCreated });
     }
 
     if (req.method === "DELETE") {

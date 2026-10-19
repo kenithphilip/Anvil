@@ -5,7 +5,9 @@
 // large-PO job replaces a page-1 preview with the full line set. Neither
 // wrote orders.payload_hash, so an approver who loaded the order before
 // either write approved lines they had not seen. Both now move it when the
-// lines changed, and leave it when they did not.
+// lines changed, and leave it when they did not. When either changes an
+// APPROVED order's lines, the approval is cleared in the same write, as an
+// edit in the PATCH clears it.
 //
 // Every value is invented.
 
@@ -18,11 +20,16 @@ const ORDER = "00000000-0000-0000-0000-0000000000b1";
 const H = vi.hoisted(() => ({ db: null, writes: [], ctx: null }));
 
 // An in-memory Supabase: filters, updates and inserts apply to rows, and
-// every update bumps updated_at the way the 001_init trigger does.
+// every update bumps updated_at the way the 001_init trigger does. A read
+// returns only the columns it names, as PostgREST does, so a writer that
+// forgets to select payload_hash or approval reads it as missing here too,
+// and the tests below see what production would. A column list with a star
+// or an embed returns whole rows.
 const clone = (v) => JSON.parse(JSON.stringify(v));
 let clock = Date.parse("2026-10-01T00:00:00Z");
 const nextStamp = () => new Date((clock += 1000)).toISOString();
 let seq = 0;
+const PLAIN_COLUMNS = /^\s*\w+(\s*,\s*\w+)*\s*$/;
 
 const makeDb = (seed) => {
   const tables = clone(seed);
@@ -34,6 +41,8 @@ const makeDb = (seed) => {
       let patch = null;
       let rowsIn = null;
       let selectAfter = false;
+      let columns = null;
+      const project = (r) => (columns ? Object.fromEntries(columns.map((c) => [c, c in r ? r[c] : null])) : r);
       const run = async () => {
         const rows = tables[table] || (tables[table] = []);
         if (op === "insert") {
@@ -47,11 +56,15 @@ const makeDb = (seed) => {
           H.writes.push({ table, patch: clone(patch), rows: hit.length });
           return { data: selectAfter ? clone(hit) : null, error: null };
         }
-        return { data: clone(hit), error: null };
+        return { data: clone(hit.map(project)), error: null };
       };
       const one = () => run().then((r) => ({ data: Array.isArray(r.data) ? (r.data[0] || null) : r.data, error: r.error }));
       const api = {
-        select() { if (op !== "select") selectAfter = true; return api; },
+        select(cols) {
+          if (op !== "select") selectAfter = true;
+          else if (typeof cols === "string" && PLAIN_COLUMNS.test(cols)) columns = cols.split(",").map((c) => c.trim());
+          return api;
+        },
         eq(c, v) { filters.push((r) => String(r[c]) === String(v)); return api; },
         neq(c, v) { filters.push((r) => String(r[c]) !== String(v)); return api; },
         in(c, vals) { filters.push((r) => vals.map(String).includes(String(r[c]))); return api; },
@@ -243,5 +256,62 @@ describe("the background writeback", () => {
     await runJob(job("job-2", LINES_WITH_HSN));
     expect(row().payload_hash).toBe(settled);
     expect(orderWrites().some((w) => "payload_hash" in w.patch)).toBe(false);
+  });
+
+  it("clears the approval of an approved order whose lines it replaces", async () => {
+    seed(inReview(LINES_WITH_HSN.slice(0, 1)));
+    approveInPlace();
+
+    await runJob(job("job-1", LINES_WITH_HSN));
+    expect(row().result.salesOrder.lineItems).toHaveLength(2);
+    expect(row()).toMatchObject({ status: "APPROVED", approval: null, approval_expires_at: null, approval_actions: [] });
+  });
+
+  it("keeps the approval when it writes the lines the approver approved", async () => {
+    seed(inReview(LINES_WITH_HSN.slice(0, 1)));
+    await runJob(job("job-1", LINES_WITH_HSN));
+    const approval = approveInPlace();
+
+    await runJob(job("job-2", LINES_WITH_HSN));
+    expect(row().approval).toEqual(approval);
+    expect(row().approval_actions).toEqual(["approve", "export_tally"]);
+  });
+});
+
+// An approval as the approve PATCH writes it, bound to the stored hash.
+const approveInPlace = () => {
+  const approval = { payloadHash: row().payload_hash, approvedBy: "u-mgr" };
+  Object.assign(row(), {
+    status: "APPROVED", approval,
+    approval_expires_at: "2099-01-01T00:00:00.000Z", approval_actions: ["approve", "export_tally"],
+  });
+  return approval;
+};
+
+describe("a manual reconcile on an approved order", () => {
+  it("that fills a line clears the approval, so the lines are approved again before a push", async () => {
+    seed(inReview(LINES_NO_HSN));
+    approveInPlace();
+
+    const out = await reconcileOrderQuotes(H.db, CTX, ORDER, { trigger: "manual" });
+    expect(out.status).toBe("reconciled");
+    expect(row().result.salesOrder.lineItems.map((l) => l.hsn)).toEqual(["84818090", "84818090"]);
+    expect(row().payload_hash).toBe(computeOrderPayloadHash(row()));
+    // The status is the approver's to change; the approval is gone.
+    expect(row()).toMatchObject({ status: "APPROVED", approval: null, approval_expires_at: null, approval_actions: [] });
+    // Approved again on the order as it now stands.
+    const ok = await approve(row().payload_hash);
+    expect(ok._status).toBe(200);
+    expect(row().approval.payloadHash).toBe(row().payload_hash);
+  });
+
+  it("that changes nothing keeps the approval", async () => {
+    seed(inReview(LINES_WITH_HSN));
+    const approval = approveInPlace();
+
+    const out = await reconcileOrderQuotes(H.db, CTX, ORDER, { trigger: "manual" });
+    expect(out.status).toBe("reconciled");
+    expect(row().approval).toEqual(approval);
+    expect(orderWrites().some((w) => "approval" in w.patch)).toBe(false);
   });
 });

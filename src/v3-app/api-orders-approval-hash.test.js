@@ -8,6 +8,10 @@
 // content edit. A write that changes nothing still leaves it, so the
 // approver's own approve goes through when the order is what they saw.
 //
+// The server is the only writer of the hash: a client-sent payload_hash is
+// ignored. A PATCH cannot approve and change the lines at once. A line save
+// returns the order as the reconcile left it, so its hash is the stored one.
+//
 // Every value is invented.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -19,11 +23,15 @@ const ORDER = "00000000-0000-0000-0000-0000000000b1";
 const H = vi.hoisted(() => ({ db: null, audits: [], writes: [], ctx: null }));
 
 // An in-memory Supabase: filters, updates and inserts apply to rows, and
-// every update bumps updated_at the way the 001_init trigger does.
+// every update bumps updated_at the way the 001_init trigger does. A read
+// returns only the columns it names, as PostgREST does, so a handler that
+// forgets to select a column it uses reads it as missing here too. A column
+// list with a star or an embed returns whole rows.
 const clone = (v) => JSON.parse(JSON.stringify(v));
 let clock = Date.parse("2026-10-01T00:00:00Z");
 const nextStamp = () => new Date((clock += 1000)).toISOString();
 let seq = 0;
+const PLAIN_COLUMNS = /^\s*\w+(\s*,\s*\w+)*\s*$/;
 
 const makeDb = (seed) => {
   const tables = clone(seed);
@@ -35,6 +43,8 @@ const makeDb = (seed) => {
       let patch = null;
       let rowsIn = null;
       let selectAfter = false;
+      let columns = null;
+      const project = (r) => (columns ? Object.fromEntries(columns.map((c) => [c, c in r ? r[c] : null])) : r);
       const run = async () => {
         const rows = tables[table] || (tables[table] = []);
         if (op === "insert") {
@@ -48,11 +58,15 @@ const makeDb = (seed) => {
           H.writes.push({ table, patch: clone(patch), rows: hit.length });
           return { data: selectAfter ? clone(hit) : null, error: null };
         }
-        return { data: clone(hit), error: null };
+        return { data: clone(hit.map(project)), error: null };
       };
       const one = () => run().then((r) => ({ data: Array.isArray(r.data) ? (r.data[0] || null) : r.data, error: r.error }));
       const api = {
-        select() { if (op !== "select") selectAfter = true; return api; },
+        select(cols) {
+          if (op !== "select") selectAfter = true;
+          else if (typeof cols === "string" && PLAIN_COLUMNS.test(cols)) columns = cols.split(",").map((c) => c.trim());
+          return api;
+        },
         eq(c, v) { filters.push((r) => String(r[c]) === String(v)); return api; },
         neq(c, v) { filters.push((r) => String(r[c]) !== String(v)); return api; },
         in(c, vals) { filters.push((r) => vals.map(String).includes(String(r[c]))); return api; },
@@ -234,5 +248,86 @@ describe("an order converted from a quote", () => {
     expect(stale._status).toBe(409);
     expect(stale._json.error.code).toBe("STALE_APPROVAL");
     expect(row().status).toBe("PENDING_REVIEW");
+  });
+});
+
+describe("the server is the only writer of the hash", () => {
+  it("a send-for-review that carries a client hash stores the server's, and approve with the client's value gets 409", async () => {
+    seed(baseOrder());
+    await save({ result: { salesOrder: { lineItems: PO_LINES } } });
+    await save({ status: "PENDING_REVIEW", payload_hash: "client-chosen" });
+    expect(row().status).toBe("PENDING_REVIEW");
+    expect(row().payload_hash).toBe(computeOrderPayloadHash(row()));
+
+    const forged = await approve("client-chosen");
+    expect(forged._status).toBe(409);
+    expect(forged._json.error.code).toBe("STALE_APPROVAL");
+    expect(row().status).toBe("PENDING_REVIEW");
+    expect(row().approval).toBeNull();
+  });
+
+  it("a PATCH with a stale view's hash does not put it back after an edit", async () => {
+    await quotePricedInReview();
+    const seen = await load();
+    await save({ result: withQty(row().result, 9) });
+    const moved = row().payload_hash;
+    expect(moved).not.toBe(seen.payload_hash);
+
+    await save({ payload_hash: seen.payload_hash });
+    expect(row().payload_hash).toBe(moved);
+    const stale = await approve(seen.payload_hash);
+    expect(stale._status).toBe(409);
+    expect(stale._json.error.code).toBe("STALE_APPROVAL");
+  });
+});
+
+describe("one PATCH that approves", () => {
+  const approveWith = (payloadHash, extra) => call(MANAGER, { method: "PATCH", _body: { status: "APPROVED", approval: { payloadHash }, ...extra } });
+
+  it("and changes a line is refused with 409, and nothing is written", async () => {
+    await quotePricedInReview();
+    const seen = await load();
+    const writesBefore = H.writes.length;
+
+    const res = await approveWith(seen.payload_hash, { result: withQty(row().result, 9) });
+    expect(res._status).toBe(409);
+    expect(res._json.error.code).toBe("APPROVE_WITH_CHANGES");
+    expect(H.writes.length).toBe(writesBefore);
+    expect(row().status).toBe("PENDING_REVIEW");
+    expect(row().approval).toBeNull();
+    expect(row().result.salesOrder.lineItems[0].quantity).toBe(4);
+    expect(row().payload_hash).toBe(seen.payload_hash);
+    expect(H.audits.map((a) => a.action)).not.toContain("approve_order");
+  });
+
+  it("with the same lines sent again approves, on the hash it names", async () => {
+    await quotePricedInReview();
+    const seen = await load();
+    const res = await approveWith(seen.payload_hash, { result: clone(row().result) });
+    expect(res._status).toBe(200);
+    expect(row().status).toBe("APPROVED");
+    expect(row().approval.payloadHash).toBe(seen.payload_hash);
+    expect(row().payload_hash).toBe(seen.payload_hash);
+  });
+});
+
+describe("the response to a line save", () => {
+  // The PO prints no HSN, so the reconcile fills it from the quote after the
+  // save is written, and the hash moves again.
+  const LINES_NO_HSN = PO_LINES.map(({ hsn: _hsn, ...l }) => l);
+
+  it("is the order as the reconcile left it, so its hash approves", async () => {
+    seed(baseOrder({ status: "PENDING_REVIEW" }));
+    const res = await save({ result: { salesOrder: { lineItems: LINES_NO_HSN } } });
+    expect(res._status).toBe(200);
+    const returned = res._json.order;
+    expect(row().result.salesOrder.lineItems.map((l) => l.hsn)).toEqual(["84818090", "84818090"]);
+    expect(returned.result.salesOrder.lineItems.map((l) => l.hsn)).toEqual(["84818090", "84818090"]);
+    expect(returned.payload_hash).toBe(row().payload_hash);
+    expect(returned.quote_id).toBe("q1");
+
+    const ok = await approve(returned.payload_hash);
+    expect(ok._status).toBe(200);
+    expect(row().status).toBe("APPROVED");
   });
 });

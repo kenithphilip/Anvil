@@ -27,7 +27,7 @@ import { recordAudit, recordEvent } from "./audit.js";
 import { reconcilePoAgainstQuotes, comparePaymentTerms, compareIncoterms, parseIncoterm } from "./quote-reconcile.js";
 import { modBomFinding, provisionalParts, MOD_BOM_FINDING_CODE } from "./mod-parts.js";
 import { mergeBlockersForward, isUnresolvedBlocker } from "./blocking-findings.js";
-import { computeOrderPayloadHash, payloadHashAfterWrite } from "./payload-hash.js";
+import { computeOrderPayloadHash, payloadHashAfterWrite, approvalClearedByContentChange } from "./payload-hash.js";
 import { linkOrderOpportunityFromQuotes } from "./order-opportunity.js";
 import { runTermsAfterReconcile } from "./terms/check.js";
 import { autoAnomalyCheck } from "./order-anomaly-check.js";
@@ -105,9 +105,10 @@ export const reconcileOrderQuotes = async (svc, ctx, orderId, opts = {}) => {
     // were absent from this select, so the incoterm comparison silently read
     // undefined off the order and fell through to the extracted payload.
     // status and updated_at serve the server trigger; po_number keeps the
-    // payload hash the same one payload-hash.js computes everywhere else, and
-    // payload_hash is the stored one this run moves when it changes a line.
-    .select("id, status, updated_at, po_number, customer_id, result, quote_id, quote_number, rule_findings, incoterm_code, delivery_terms, payload_hash")
+    // payload hash the same one payload-hash.js computes everywhere else.
+    // payload_hash is the stored one this run moves when it changes a line,
+    // and approval is the one it clears then (approvalClearedByContentChange).
+    .select("id, status, updated_at, po_number, customer_id, result, quote_id, quote_number, rule_findings, incoterm_code, delivery_terms, payload_hash, approval")
     .eq("tenant_id", ctx.tenantId).eq("id", orderId).maybeSingle();
   if (orderQ.error) throw new Error("orders read: " + orderQ.error.message);
   if (!orderQ.data) return { status: "not_found" };
@@ -346,6 +347,10 @@ export const reconcileOrderQuotes = async (svc, ctx, orderId, opts = {}) => {
   // (it filled a line's HSN from the quote), so an approver who loaded the
   // order before is refused as stale. A run that changed nothing leaves it.
   const stamp = payloadHashAfterWrite(order, { ...order, result: newResult });
+  // The manual reconcile runs at any status. When it changes an approved
+  // order's lines, the approval goes, as it does for an edit in the PATCH, in
+  // the same write: the order must be approved again before it is pushed.
+  const approvalCleared = approvalClearedByContentChange(order, { ...order, result: newResult });
   let write = svc.from("orders")
     .update({
       result: newResult,
@@ -353,6 +358,7 @@ export const reconcileOrderQuotes = async (svc, ctx, orderId, opts = {}) => {
       quote_id: primary?.quote_id || order.quote_id || null,
       quote_number: primary?.quote_number || order.quote_number || null,
       ...(stamp ? { payload_hash: stamp } : {}),
+      ...(approvalCleared || {}),
     })
     .eq("tenant_id", ctx.tenantId).eq("id", orderId);
   // Compare-and-set for the server trigger. The trigger reads the order after
@@ -373,7 +379,8 @@ export const reconcileOrderQuotes = async (svc, ctx, orderId, opts = {}) => {
   await recordAudit(ctx, {
     action: "order_reconcile_quotes", objectType: "order", objectId: orderId,
     detail: (trigger !== "manual" ? "auto (" + trigger + "): " : "")
-      + rec.summary.matched + "/" + rec.summary.total + " matched, " + rec.summary.price_mismatch + " price-mismatch, " + rec.summary.unmatched + " unmatched across " + rec.quotes_used.length + " quote(s)" + (paymentTerms.verdict === "mismatch" ? "; PAYMENT-TERMS MISMATCH (PO " + paymentTerms.po_terms + " vs quote " + paymentTerms.quote_terms + ")" : ""),
+      + rec.summary.matched + "/" + rec.summary.total + " matched, " + rec.summary.price_mismatch + " price-mismatch, " + rec.summary.unmatched + " unmatched across " + rec.quotes_used.length + " quote(s)" + (paymentTerms.verdict === "mismatch" ? "; PAYMENT-TERMS MISMATCH (PO " + paymentTerms.po_terms + " vs quote " + paymentTerms.quote_terms + ")" : "")
+      + (approvalCleared ? "; approval cleared: the lines changed after approval" : ""),
   });
 
   // The terms check reads the quotes this run just found (quotes_used). The

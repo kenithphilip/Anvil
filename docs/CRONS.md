@@ -82,6 +82,32 @@ handler neither blocks nor starves the rest):
 - docai/extraction_reaper (runs stranded at `status='running'`)
 - logistics/monitor_daily — **backstop**, see below
 - eval/replay — only when `EVAL_REPLAY_ENABLED` is set
+- inventory/planning_weekly: the weekly inventory planner, on one UTC
+  weekday only (`INVENTORY_PLANNING_DAY`), see below
+
+#### The weekly inventory planner
+
+`inventory/planning_weekly` runs `/api/cron/inventory-planning-weekly` from
+the daily group on ONE UTC weekday, chosen by `INVENTORY_PLANNING_DAY`:
+
+| Value | Effect |
+|---|---|
+| unset or blank | Monday (1), the default |
+| `0` to `6` | that UTC weekday (0 is Sunday) |
+| `-1` | off |
+| anything else (`Mon`, `7`, `01`, `1.0`) | refused: the planner does not run, and every daily run logs a warning naming the value |
+
+Vercel applies an env change from the next deployment. The planner does
+nothing for a tenant until `tenant_settings.inventory_planning_enabled` is
+on, then plans only items with `item_master.planning_enabled`, and the
+plans it makes are `draft` for an operator to approve. Its budget in the
+group is 40s; it has no deadline of its own, so a tenant it has not reached
+when the budget runs out is not planned that week.
+
+It writes two `cron_health` rows, both judged against an 8-day bound (the
+weekly cadence plus a day of grace): `inventory/planning_weekly`, the daily
+group's row, and `inventory-planning-weekly`, which the handler records
+itself.
 
 #### Why the logistics monitor is registered twice
 

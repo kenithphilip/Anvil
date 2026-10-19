@@ -46,6 +46,8 @@ import { migrationErrorBody, migrationNotApplied, termsDbError } from "../_lib/t
 import { historyByFlag, readDecisions } from "../_lib/terms/decisions.js";
 import { needsDecision } from "../_lib/terms/compare.js";
 import { SEVERITY_LEVELS } from "../_lib/terms/taxonomy.js";
+import { orderStage } from "../_lib/order-stage.js";
+import { readStageEvidence, stageEvidenceFor } from "../_lib/order-stage-evidence.js";
 
 // The order_status enum (001_init.sql).
 const STATUS_VALUES = new Set([
@@ -134,22 +136,18 @@ const loadRuns = async (svc, tenantId, rows) => {
   return byId;
 };
 
-// The ERP sales orders attached to these orders (role 'sales_order', the
-// attach_sales_order link) and the voucher number each one read as.
-// order_documents has no tenant_id, so it is read only for order ids that
-// came from this tenant's own query.
-const loadErp = async (svc, tenantId, orderIds) => {
+// The voucher number each attached ERP sales order read as. erpSo holds the
+// attach_sales_order links (role 'sales_order') per order, as the stage
+// evidence read them (order-stage-evidence.js), so the links are read once.
+const loadErp = async (svc, tenantId, erpSo) => {
   const byOrder = new Map();
-  if (!orderIds.length) return byOrder;
-  const links = await svc.from("order_documents")
-    .select("order_id, document_id")
-    .eq("role", "sales_order").in("order_id", orderIds);
-  if (links.error) throw new Error("order_documents: " + links.error.message);
   const ordersByDoc = new Map();
-  for (const l of links.data || []) {
-    if (!byOrder.has(l.order_id)) byOrder.set(l.order_id, { voucher_no: null });
-    if (!ordersByDoc.has(l.document_id)) ordersByDoc.set(l.document_id, []);
-    ordersByDoc.get(l.document_id).push(l.order_id);
+  for (const [orderId, docs] of erpSo) {
+    byOrder.set(orderId, { voucher_no: null });
+    for (const { document_id: docId } of docs) {
+      if (!ordersByDoc.has(docId)) ordersByDoc.set(docId, []);
+      ordersByDoc.get(docId).push(orderId);
+    }
   }
   const docIds = [...ordersByDoc.keys()];
   if (!docIds.length) return byOrder;
@@ -271,15 +269,17 @@ const readRowsById = async (svc, tenantId, ids) => {
 };
 
 const buildRows = async (svc, tenantId, raw, terms) => {
-  const [runs, erp, termsByOrder] = await Promise.all([
+  const [runs, ev, termsByOrder] = await Promise.all([
     loadRuns(svc, tenantId, raw),
-    loadErp(svc, tenantId, raw.map((r) => r.id)),
+    readStageEvidence(svc, tenantId, raw.map((r) => r.id)),
     loadTerms(svc, tenantId, raw.map((r) => r.id), terms),
   ]);
+  const erp = await loadErp(svc, tenantId, ev.erpSo);
   return raw.map((r) => registerRow(r, {
     run: r.extraction_run_id ? runs.get(r.extraction_run_id) || null : null,
     erp: erp.get(r.id) || null,
     terms: termsByOrder.get(r.id) || null,
+    stage: orderStage(r, stageEvidenceFor(ev, r.id)),
   }));
 };
 

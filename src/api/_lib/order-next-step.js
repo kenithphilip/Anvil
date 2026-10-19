@@ -13,6 +13,11 @@
 //   config        the tenant workflow config (DEFAULT_WORKFLOW_CONFIG)
 //   permissions   { write, approve, push } for the person looking. Missing
 //                 means no: the button is never enabled on a guess.
+//   stage         the order's stage (order-stage.js), when the caller has
+//                 it. It answers what the status cannot: a PO still being
+//                 read, an approval a later edit cleared, the Mode B handoff
+//                 and ERP evidence, and the end. Without it the status
+//                 decides, as before.
 //
 // It returns { action, label, enabled, blockers[], notes[], transitions[] }:
 //   action       a machine name (ACTIONS below)
@@ -40,6 +45,8 @@
 //
 // PURE. No I/O.
 
+import { STAGE_LABELS } from "./order-stage.js";
+
 export const WORKFLOW_REVIEW_MODES = Object.freeze(["approval", "solo"]);
 
 export const DEFAULT_WORKFLOW_CONFIG = Object.freeze({
@@ -51,9 +58,22 @@ export const DEFAULT_WORKFLOW_CONFIG = Object.freeze({
 });
 
 export const ACTIONS = Object.freeze([
-  "submit_for_approval", "await_approval", "approve", "confirm_and_generate",
-  "push_to_tally", "enter_in_tally", "none",
+  "submit_for_approval", "resubmit_for_approval", "await_approval", "approve", "confirm_and_generate",
+  "push_to_tally", "send_handoff", "resend_handoff", "enter_in_tally", "attach_erp_so", "verify_in_erp",
+  "wait_for_extraction", "none",
 ]);
+
+// The stage's next actions that no call here makes. The bar names them and
+// the button stays off: the handoff send is C-18, the keyed and verified
+// records are C-12, and the clerk keys the SO in Tally.
+const STAGE_ONLY = Object.freeze({
+  wait_for_extraction: "Reading the PO in the background",
+  send_handoff: "Mode B: hand the order to order processing",
+  resend_handoff: "Changed since handoff: hand it off again",
+  enter_in_tally: "Mode B: enter the SO in Tally by hand",
+  attach_erp_so: "Keyed, unverified: attach the Tally SO PDF",
+  verify_in_erp: "Check the ERP entry against the PO",
+});
 
 // The defaults with a tenant's override. An unknown value is the default:
 // a typo can never switch a tenant to solo.
@@ -68,6 +88,7 @@ export const resolveWorkflowConfig = (override = null) => {
 const ORDER = "/api/orders/{order_id}";
 const T = Object.freeze({
   submit: { method: "PATCH", path: ORDER, body: { status: "PENDING_REVIEW" } },
+  toDraft: { method: "PATCH", path: ORDER, body: { status: "DRAFT" } },
   approve: { method: "PATCH", path: ORDER, body: { status: "APPROVED", approval: { payloadHash: "{payload_hash}" } } },
   soPdf: { method: "GET", path: "/api/orders/so_pdf?orderId={order_id}", body: null },
   push: { method: "POST", path: "/api/tally/push", body: { orderId: "{order_id}" } },
@@ -86,7 +107,7 @@ const permissionBlocker = (what) => ({ key: "permission:" + what, type: "permiss
 // are shown to an admin to measure the terms check, not to act on.
 const live = (rows) => rows.filter((r) => r && r.status !== "decided" && !r.shadow);
 
-export const nextStep = ({ status = null, mode = "A", exceptions = null, config = null, permissions = null } = {}) => {
+export const nextStep = ({ status = null, mode = "A", exceptions = null, config = null, permissions = null, stage = null } = {}) => {
   const cfg = resolveWorkflowConfig(config);
   const can = { write: permissions?.write === true, approve: permissions?.approve === true, push: permissions?.push === true };
   const rows = live(rowsOf(exceptions));
@@ -95,6 +116,18 @@ export const nextStep = ({ status = null, mode = "A", exceptions = null, config 
   const modeB = mode === "B";
   const out = (action, label, enabled, blockers = [], notes = [], transitions = []) =>
     ({ action, label, enabled: !!enabled, blockers, notes, transitions, review: cfg.review, mode: modeB ? "B" : "A" });
+
+  const st = stage && typeof stage === "object" ? stage : null;
+  if (st && STAGE_ONLY[st.next_action]) return out(st.next_action, STAGE_ONLY[st.next_action], false);
+  if (st && (st.stage === "verified" || st.stage === "cancelled")) return out("none", "No next step (" + STAGE_LABELS[st.stage] + ")", false);
+  if (st && st.next_action === "resubmit_for_approval") {
+    // The revision rule: an edit cleared the approval. Back to DRAFT, then
+    // for approval again. Only APPROVED may go back to DRAFT.
+    const blockers = [...sendBlockers];
+    if (!can.write) blockers.push(permissionBlocker("write"));
+    if (status !== "APPROVED") blockers.push({ key: "status:" + status, type: "status", title: "Only an approved order can go back for approval", reason: "status" });
+    return out("resubmit_for_approval", "Changed after approval: send for approval again", blockers.length === 0, blockers, approvalBlockers, [T.toDraft, T.submit]);
+  }
 
   if (cfg.review === "solo" && (SUBMITTABLE.has(status) || status === "PENDING_REVIEW")) {
     // Approval is skipped only when nothing open needs a person.

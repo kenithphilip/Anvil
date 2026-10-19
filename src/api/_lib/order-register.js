@@ -4,6 +4,7 @@
 import { SEVERITY_LEVELS } from "./terms/taxonomy.js";
 import { needsDecision } from "./terms/compare.js";
 import { OPEN_DECISIONS } from "./terms/decisions.js";
+import { withStageColumns } from "./order-stage.js";
 //
 // In Mode B Anvil is the repository of every sales order received and
 // analysed, while the ERP holds the voucher. The orders list shows an order's
@@ -53,8 +54,9 @@ export const applyChannelFilter = (q, channel) => {
 
 // Every column the register needs, and no more. JSON paths keep the raw PO
 // text in preflight_payload out of the response. The sales order itself is
-// read whole for the line count and value, as the slim orders list does.
-export const REGISTER_SELECT = [
+// read whole for the line count and value, as the slim orders list does. The
+// stage columns (order-stage.js) are added for the row's stage.
+export const REGISTER_SELECT = withStageColumns([
   "id", "status", "po_number", "po_date", "created_at", "customer_id",
   "customer:customer_id(customer_name)",
   "source:preflight_payload->>source",
@@ -64,7 +66,7 @@ export const REGISTER_SELECT = [
   "reorder_of:result->>source_reorder_of",
   "sales_order:result->salesOrder",
   "reconciliation:result->quoteReconciliation",
-].join(", ");
+]);
 
 // The "has flags" filter: a reconciliation that recorded at least one flag.
 // ->> renders the flags array as text, so an empty array is "[]" and an order
@@ -161,8 +163,9 @@ export const termsText = (t) => {
 
 // One register row. erp: { attached, voucher_no } or null. terms: the
 // summary above, or null when the terms check is off or hidden from this
-// caller (the column then says nothing, never "no flags").
-export const registerRow = (row, { run = null, erp = null, terms = null } = {}) => {
+// caller (the column then says nothing, never "no flags"). stage: the
+// order's orderStage() (order-stage.js).
+export const registerRow = (row, { run = null, erp = null, terms = null, stage = null } = {}) => {
   const so = (row.sales_order && typeof row.sales_order === "object") ? row.sales_order : {};
   const lines = Array.isArray(so.lineItems) ? so.lineItems.length : 0;
   return {
@@ -179,6 +182,7 @@ export const registerRow = (row, { run = null, erp = null, terms = null } = {}) 
     extraction: extractionOf(row, run, lines),
     reconciliation: reconciliationOf(row.reconciliation),
     status: row.status,
+    stage,
     erp_so: erp ? { attached: true, voucher_no: erp.voucher_no || null } : { attached: false, voucher_no: null },
     terms,
     // Placeholder until the order-processing handoff ships. Nothing sends a

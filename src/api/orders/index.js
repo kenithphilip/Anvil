@@ -6,6 +6,8 @@ import { parsePoDate } from "../_lib/parse-date.js";
 import { mapLinesToItemMaster } from "../_lib/item-mapper.js";
 import { projectAnomaliesToFindings } from "../_lib/blocking-findings.js";
 import { autoReconcileOrder, hasReconcilableLines } from "../_lib/order-reconcile.js";
+import { orderStage, withStageColumns } from "../_lib/order-stage.js";
+import { readStageEvidence, stageEvidenceFor } from "../_lib/order-stage-evidence.js";
 
 const STATUS_VALUES = new Set(["DRAFT", "PENDING_REVIEW", "APPROVED", "BLOCKED", "DUPLICATE", "REUSED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED", "CANCELLED"]);
 
@@ -110,7 +112,10 @@ export default async function handler(req, res) {
       // result.salesOrder.currency (the SO list reads it from `result`, which
       // is selected below). Selecting `currency` here throws
       // "column orders.currency does not exist" -> "Failed to load orders".
-      const SLIM_COLS = "id, status, order_mode, po_number, quote_number, approved_by, payload_hash, created_at, updated_at, customer_id, result, customer:customer_id(customer_name, state_code)";
+      // The stage columns (order-stage.js) ride along so each row carries its
+      // stage.
+      const SLIM_COLS = withStageColumns(["id", "status", "order_mode", "po_number", "quote_number", "approved_by", "payload_hash", "created_at", "updated_at", "customer_id", "result"])
+        + ", customer:customer_id(customer_name, state_code)";
       let query = svc.from("orders")
         .select(slim ? SLIM_COLS : "*, customer:customer_id(customer_name, state_code)")
         .eq("tenant_id", ctx.tenantId)
@@ -121,7 +126,10 @@ export default async function handler(req, res) {
       if (req.query.customer) query = query.eq("customer_id", req.query.customer);
       const { data, error } = await query;
       if (error) throw new Error(error.message);
-      return json(res, 200, { orders: data });
+      const orders = data || [];
+      // One mode read and one batched ERP SO read for the whole page.
+      const ev = await readStageEvidence(svc, ctx.tenantId, orders.map((o) => o.id));
+      return json(res, 200, { orders: orders.map((o) => ({ ...o, stage: orderStage(o, stageEvidenceFor(ev, o.id)) })) });
     }
     if (req.method === "POST") {
       requirePermission(ctx, "write");

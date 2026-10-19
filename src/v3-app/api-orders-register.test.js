@@ -177,6 +177,7 @@ beforeEach(() => {
     orders: [
       order("o1", {
         created_at: "2026-10-01T05:00:00.000Z", status: "APPROVED", customer_id: C1,
+        approval: { payloadHash: "h-1" }, approved_at: "2026-10-02T05:00:00.000Z",
         po_number: "PO-T-001", po_date: "2026-09-30",
         preflight_payload: { extraction_run_id: RUN1, confidence_overall: 0.8, text: "raw PO text" },
         result: {
@@ -268,11 +269,24 @@ describe("register: the row", () => {
       extraction: { status: "ok", confidence: 0.92, run_id: RUN1 },
       reconciliation: { analysed: true, as_of: null, matched: 1, total: 2, line_flags: 1, terms_flags: 1 },
       status: "APPROVED",
+      // No settings row: Mode A, so an approved order waits for the push.
+      stage: { stage: "approved", since: "2026-10-02T05:00:00.000Z", evidence_ref: "orders.approved_at", holder_role: "sales_engineer", next_action: "push_to_tally" },
       erp_so: { attached: true, voucher_no: "SO-77" },
       // The terms check is off for this tenant (no settings row): no column.
       terms: null,
       handoff: { status: "not_sent" },
     });
+  });
+
+  it("in Mode B the attached ERP SO makes the row Keyed in ERP, from the one link read the voucher also uses", async () => {
+    H.store.tenant_settings = [{ tenant_id: "t-1", terms_check_mode: "off", so_processing_mode: "B" }];
+    const r = await get();
+    const o1 = r.body.rows.find((x) => x.id === "o1");
+    expect(o1.stage).toMatchObject({ stage: "keyed", evidence_ref: "order_documents:doc-so-1", next_action: "verify_in_erp" });
+    expect(o1.erp_so).toEqual({ attached: true, voucher_no: "SO-77" });
+    expect(r.body.rows.find((x) => x.id === "o3").stage.stage).toBe("in_approval");
+    expect(r.body.rows.find((x) => x.id === "o2").stage.stage).toBe("verifying");
+    expect(H.queries.order_documents).toHaveLength(1);
   });
 
   it("derives the channel from how the order arrived", async () => {

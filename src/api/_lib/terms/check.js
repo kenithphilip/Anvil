@@ -126,7 +126,7 @@ export const readFlags = async (svc, tenantId, checkId) => {
 // The PO document: the one the intake stamped on the order, else the order's
 // first purchase_order attachment. order_documents has no tenant_id, so it is
 // read only for an order id that came from this tenant's own query.
-const poDocumentOf = async (svc, order) => {
+export const poDocumentOf = async (svc, order) => {
   if (order.source_document_id && UUID_RE.test(order.source_document_id)) return order.source_document_id;
   const r = await svc.from("order_documents").select("document_id")
     .eq("order_id", order.id).eq("role", "purchase_order").limit(1);

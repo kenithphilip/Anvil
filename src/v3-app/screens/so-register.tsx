@@ -4,6 +4,7 @@ import { Banner, Btn, Card, Chip, WSTitle, rowActivateProps } from "../lib/primi
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { isAdmin } from "../lib/rbac";
+import { handoffChip } from "../components/OrderHandoffButton";
 
 // ============================================================
 // ANVIL v3: Sales-order register
@@ -46,8 +47,8 @@ const EXTRACTION_CHIP: Record<string, { k: string; label: string }> = {
 
 const PAGE_SIZE = 50;
 
-type Filters = { from: string; to: string; customer: string; channel: string; status: string; hasFlags: boolean; undecidedTerms: boolean };
-const EMPTY: Filters = { from: "", to: "", customer: "", channel: "", status: "", hasFlags: false, undecidedTerms: false };
+type Filters = { from: string; to: string; customer: string; channel: string; status: string; hasFlags: boolean; undecidedTerms: boolean; notHandedOff: boolean };
+const EMPTY: Filters = { from: "", to: "", customer: "", channel: "", status: "", hasFlags: false, undecidedTerms: false, notHandedOff: false };
 
 // A local calendar day as the instant it starts, so "from 1 Oct" means the
 // operator's own midnight, not UTC's. `to` is exclusive: the next midnight.
@@ -66,6 +67,7 @@ export const registerParams = (f: Filters, page: number) => ({
   status: f.status,
   has_flags: f.hasFlags ? "1" : "",
   has_undecided_terms: f.undecidedTerms ? "1" : "",
+  not_handed_off: f.notHandedOff ? "1" : "",
   // An admin also sees a shadow-mode terms check; the server refuses anyone
   // else who asks.
   include_shadow: isAdmin() ? "1" : "",
@@ -216,6 +218,13 @@ const SoRegister: React.FC = () => {
             &nbsp;has flags
           </label>
         </Chip>
+        <Chip k={filters.notHandedOff ? "fill" : undefined}>
+          <label style={{ cursor: "pointer" }}>
+            <input type="checkbox" aria-label="Only orders not handed off" checked={filters.notHandedOff}
+                   onChange={(e) => setFilter({ notHandedOff: e.target.checked })} />
+            &nbsp;not handed off
+          </label>
+        </Chip>
         {(showTerms || filters.undecidedTerms) && (
           <Chip k={filters.undecidedTerms ? "fill" : undefined}>
             <label style={{ cursor: "pointer" }}>
@@ -299,8 +308,12 @@ const SoRegister: React.FC = () => {
                       {showTerms && <td><TermsCell terms={r.terms} /></td>}
                       <td><Chip k={st.k as any}>{st.label}</Chip></td>
                       <td className="mono-sm">{r.erp_so?.attached ? (r.erp_so.voucher_no || "attached") : <span style={{ color: "var(--ink-3)" }}>none</span>}</td>
-                      {/* Placeholder until the order-processing handoff ships. */}
-                      <td className="mono-sm" style={{ color: "var(--ink-3)" }}>{r.handoff?.status === "not_sent" ? "not sent" : (r.handoff?.status || "not sent")}</td>
+                      <td className="mono-sm">{(() => {
+                        const c = handoffChip(r.handoff);
+                        return r.handoff?.status && r.handoff.status !== "not_sent"
+                          ? <Chip k={c.k as any}>{c.label}</Chip>
+                          : <span style={{ color: "var(--ink-3)" }}>{c.label}</span>;
+                      })()}</td>
                     </tr>
                   );
                 })}

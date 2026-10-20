@@ -4,6 +4,7 @@
 import { SEVERITY_LEVELS } from "./terms/taxonomy.js";
 import { needsDecision } from "./terms/compare.js";
 import { OPEN_DECISIONS } from "./terms/decisions.js";
+import { handoffState } from "./order-handoff.js";
 //
 // In Mode B Anvil is the repository of every sales order received and
 // analysed, while the ERP holds the voucher. The orders list shows an order's
@@ -64,6 +65,8 @@ export const REGISTER_SELECT = [
   "reorder_of:result->>source_reorder_of",
   "sales_order:result->salesOrder",
   "reconciliation:result->quoteReconciliation",
+  // The handoff column (migration 251). The payload is read for its hash only.
+  "payload_hash", "handoff_status", "handoff_sent_at", "handoff_sent_by", "handoff_payload",
 ].join(", ");
 
 // The "has flags" filter: a reconciliation that recorded at least one flag.
@@ -162,7 +165,7 @@ export const termsText = (t) => {
 // One register row. erp: { attached, voucher_no } or null. terms: the
 // summary above, or null when the terms check is off or hidden from this
 // caller (the column then says nothing, never "no flags").
-export const registerRow = (row, { run = null, erp = null, terms = null } = {}) => {
+export const registerRow = (row, { run = null, erp = null, terms = null, sentByName = null } = {}) => {
   const so = (row.sales_order && typeof row.sales_order === "object") ? row.sales_order : {};
   const lines = Array.isArray(so.lineItems) ? so.lineItems.length : 0;
   return {
@@ -181,10 +184,19 @@ export const registerRow = (row, { run = null, erp = null, terms = null } = {}) 
     status: row.status,
     erp_so: erp ? { attached: true, voucher_no: erp.voucher_no || null } : { attached: false, voucher_no: null },
     terms,
-    // Placeholder until the order-processing handoff ships. Nothing sends a
-    // handoff today, so every order truthfully reads "not sent".
-    handoff: { status: "not_sent" },
+    // not_sent, or sent / failed / not_configured with when, by whom, and
+    // whether the order changed since (order-handoff.js handoffState).
+    handoff: handoffState(row, sentByName),
   };
+};
+
+// The Handoff column as words, for the export.
+export const handoffText = (h) => {
+  if (!h || h.status === "not_sent") return "not sent";
+  if (h.status === "not_configured") return "not sent: no mail provider";
+  const at = (h.sent_at ? " " + h.sent_at : "") + (h.sent_by_name ? " by " + h.sent_by_name : "");
+  if (h.status === "failed") return "failed" + at;
+  return "sent" + at + (h.changed_since ? " (changed since handoff)" : "");
 };
 
 // The register as a worksheet: a header row, then one row per order.
@@ -211,7 +223,7 @@ export const registerAoa = (rows) => [
     r.reconciliation.analysed ? r.reconciliation.terms_flags : "",
     r.status,
     r.erp_so.attached ? (r.erp_so.voucher_no || "attached") : "",
-    r.handoff.status === "not_sent" ? "not sent" : r.handoff.status,
+    handoffText(r.handoff),
     termsText(r.terms),
   ]),
 ];

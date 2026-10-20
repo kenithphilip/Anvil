@@ -58,6 +58,7 @@ import { PipelineDiagnostics } from "../components/PipelineDiagnostics";
 import { TermsPane } from "../components/TermsPane";
 import { FieldPill, ProvenanceChip, ExtractionQualityCard, EditableCell } from "../components/SOWorkspaceReviewCells";
 import { ResizableTh } from "../components/ResizableTh";
+import { OrderHandoffButton } from "../components/OrderHandoffButton";
 import {
   ColumnWidths, loadWidths, saveWidths, resizeColumn, clearColumn, tableLayoutFor, widthStyle,
 } from "../lib/column-widths";
@@ -2219,6 +2220,8 @@ const WiredSOWorkspace = () => {
             { id: "share_link", label: "Share link", icon: Icon.send, title: "Generate a 7-day signed share link to the quote PDF", onSelect: () => shareQuotePdf(o) },
             { id: "audit_pack", label: "Audit pack", icon: Icon.download, title: "Bundle PO + quote + result + signed evidence URLs into a JSON download", onSelect: () => exportAuditPack(o) },
           ]} />
+          {/* The Mode B handoff. Renders nothing unless the tenant has it on. */}
+          <OrderHandoffButton orderId={o.id} refreshKey={String(o.payload_hash || "") + String(o.updated_at || "")} onSent={() => setBump((n) => n + 1)} />
           <span style={{ flex: 1 }} />
           <Btn sm kind="ghost"
                disabled={!canCancel || !!busy || !canCancelFrom(o.status)}

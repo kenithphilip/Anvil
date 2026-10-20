@@ -215,7 +215,7 @@ export const graphAccessToken = async (svc, settings) => {
 const recipients = (list) => (Array.isArray(list) ? list : [list])
   .filter(Boolean).map((email) => ({ emailAddress: { address: String(email) } }));
 
-export const buildGraphMessage = ({ to, cc, bcc, subject, body, attachments }) => {
+export const buildGraphMessage = ({ to, cc, bcc, replyTo, subject, body, attachments }) => {
   const msg = {
     subject: subject || "(no subject)",
     body: { contentType: "HTML", content: (body || "").replace(/\n/g, "<br/>") },
@@ -223,6 +223,7 @@ export const buildGraphMessage = ({ to, cc, bcc, subject, body, attachments }) =
   };
   const ccR = recipients(cc); if (ccR.length) msg.ccRecipients = ccR;
   const bccR = recipients(bcc); if (bccR.length) msg.bccRecipients = bccR;
+  const replyR = recipients(replyTo); if (replyR.length) msg.replyTo = replyR;
   if (Array.isArray(attachments) && attachments.length) {
     msg.attachments = attachments.map((a) => ({
       "@odata.type": "#microsoft.graph.fileAttachment",
@@ -236,13 +237,13 @@ export const buildGraphMessage = ({ to, cc, bcc, subject, body, attachments }) =
 // Returns { provider, ok, status, conversationId, internetMessageId, detail }.
 // Never throws for a provider-side failure — the caller records it like any
 // other provider result.
-export const sendViaGraph = async ({ accessToken, sender, to, cc, bcc, subject, body, attachments }) => {
+export const sendViaGraph = async ({ accessToken, sender, to, cc, bcc, replyTo, subject, body, attachments }) => {
   const mbox = encodeURIComponent(String(sender || ""));
   const headers = { Authorization: "Bearer " + accessToken, "Content-Type": "application/json" };
   try {
     const draftResp = await safeFetch(GRAPH + "/users/" + mbox + "/messages", {
       method: "POST", headers,
-      body: JSON.stringify(buildGraphMessage({ to, cc, bcc, subject, body, attachments })),
+      body: JSON.stringify(buildGraphMessage({ to, cc, bcc, replyTo, subject, body, attachments })),
     });
     const draftText = await draftResp.text();
     let draft = null;

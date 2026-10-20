@@ -159,6 +159,9 @@ export const ACTIONS: Record<string, Role[]> = {
   "order.terms_decide":   ["sales_engineer", "sales_manager", "admin"],
   // Accept, or call "not a deviation", a high or critical terms flag.
   "order.terms_accept_high":["sales_manager", "admin"],
+  // Send the order to the order processing team (the Mode B handoff).
+  // Mirrors auth.js SERVER_ACTIONS; the server enforces both.
+  "order.handoff":        ["sales_engineer", "sales_manager", "operator", "admin"],
   "admin.add_member":     ["admin"],
   "admin.change_role":    ["admin"],
   "security.edit_redaction":["admin"],

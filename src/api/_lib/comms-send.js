@@ -163,7 +163,7 @@ export const sendCommunication = async (svc, ctx, commId) => {
         const { accessToken, sender } = await graphAccessToken(svc, graphSettings);
         providerResult = await sendViaGraph({
           accessToken, sender,
-          to: row.data.to_addr, cc: row.data.cc_addrs, bcc: row.data.bcc_addrs,
+          to: row.data.to_addr, cc: row.data.cc_addrs, bcc: row.data.bcc_addrs, replyTo: row.data.reply_to,
           subject: row.data.subject, body: row.data.body, attachments: att.attachments,
         });
       } catch (err) { lastError = err.message; }

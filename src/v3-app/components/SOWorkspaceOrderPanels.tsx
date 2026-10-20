@@ -211,6 +211,8 @@ export const OrderHeaderEditor: React.FC<{ order: any; onSaved: () => void }> = 
             <option value="By Rail">By Rail</option>
             <option value="By Courier">By Courier</option>
             <option value="Self Pickup">Self Pickup</option>
+            <option value="By Hand Carry (customer)">By Hand Carry (customer)</option>
+            <option value="By Hand Carry (our engineer)">By Hand Carry (our engineer)</option>
           </select>
         </div>
         <div style={{ flex: "1 1 220px" }}>

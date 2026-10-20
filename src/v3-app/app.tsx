@@ -14,7 +14,7 @@ import { Card, WSTitle } from "./lib/primitives";
 import { Icon } from "./lib/icons";
 import { NAV, ROLES, crumbFor } from "./lib/nav";
 import { RBAC } from "./lib/rbac";
-import { loadNavSettings, isNavEnabled } from "./lib/nav-settings";
+import { loadNavSettings, isNavEnabled, visibleNav } from "./lib/nav-settings";
 import { Prefs } from "./lib/preferences";
 import { AnvilBackend } from "./lib/api";
 import { ToastStack } from "./lib/toasts";
@@ -332,9 +332,7 @@ export default function App() {
   // force-rerender above. eslint-disable: the gate reads module state, not
   // props, so the role dep is the meaningful trigger.
   const navFiltered = useMemo(
-    () => RBAC.filterNav(NAV)
-      .map((g) => ({ ...g, items: g.items.filter((it) => isNavEnabled(it.id)) }))
-      .filter((g) => g.items.length > 0),
+    () => visibleNav(NAV),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [RBAC.role(), navTick],
   );

@@ -25,6 +25,7 @@ import adminSoProcessingMode   from "./admin/so_processing_mode.js";
 import adminOrderHandoffSettings from "./admin/order_handoff_settings.js";
 import adminLlmSettings        from "./admin/llm_settings.js";
 import adminNavSettings        from "./admin/nav_settings.js";
+import adminLaneReadiness      from "./admin/lane_readiness.js";
 import adminQuoteSettings      from "./admin/quote_settings.js";
 import adminEquipment          from "./admin/equipment.js";
 import adminFxRates            from "./admin/fx_rates.js";
@@ -870,6 +871,7 @@ const STATIC_ROUTES = {
   "/admin/docai_provider_keys":     docaiProviderKeys,
   "/admin/llm_settings":            adminLlmSettings,
   "/admin/nav_settings":            adminNavSettings,
+  "/admin/lane_readiness":          adminLaneReadiness,
   "/admin/quote_settings":          adminQuoteSettings,
   "/admin/equipment":               adminEquipment,
   "/admin/fx_rates":                adminFxRates,

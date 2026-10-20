@@ -108,7 +108,7 @@ const CRON_EXPECTED_MAX_AGE_MS = {
   "default":            10 * 60 * 1000,
 };
 
-const probeCron = async () => {
+export const probeCron = async () => {
   try {
     const svc = serviceClient();
     const r = await svc.from("cron_health").select("*").order("last_run_at", { ascending: false });

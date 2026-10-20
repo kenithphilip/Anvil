@@ -3,8 +3,7 @@ import { Banner, Btn, Card, Chip } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
 import { NAV, ROLES } from "../lib/nav";
-import { MATRIX, type Role } from "../lib/rbac";
-import { CORE_NAV_IDS, applyNavSettingsLocal, type NavDisabledMap } from "../lib/nav-settings";
+import { CORE_NAV_IDS, applyNavSettingsLocal, hasRoleAccess, type NavDisabledMap } from "../lib/nav-settings";
 
 // ============================================================
 // Admin · Navigation visibility
@@ -19,8 +18,6 @@ import { CORE_NAV_IDS, applyNavSettingsLocal, type NavDisabledMap } from "../lib
 // ============================================================
 
 const ROLE_LABEL = (id: string) => ROLES.find((r) => r.id === id)?.label || id.replace(/_/g, " ");
-const hasRoleAccess = (navId: string, role: string): boolean =>
-  /[rwax]/.test((MATRIX[navId] && MATRIX[navId][role as Role]) || "");
 
 export const NavVisibilityAdmin: React.FC = () => {
   const [role, setRole] = useState<string>("sales_engineer");

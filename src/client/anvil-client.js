@@ -1794,6 +1794,9 @@
     orderHandoffSettings:          async () => apiFetch("/api/admin/order_handoff_settings"),
     updateOrderHandoffSettings:    async (patch) => apiFetch("/api/admin/order_handoff_settings", { method: "PATCH", body: patch }),
     previewOrderHandoffRecipients: async (draft) => apiFetch("/api/admin/order_handoff_settings", { method: "POST", body: draft }),
+    // Mode B lane readiness (plan C-8). Admin only, read-only: flags,
+    // migrations, cron, mail, recipients, ClamAV, payment_terms, 7-day use.
+    laneReadiness: async () => apiFetch("/api/admin/lane_readiness"),
     listHolidays: async (params) => {
       const qs = new URLSearchParams(params || {}).toString();
       return apiFetch("/api/admin/holidays" + (qs ? "?" + qs : ""));

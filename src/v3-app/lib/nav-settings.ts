@@ -12,7 +12,8 @@
 // never lock themselves out of the screen that edits this setting.
 
 import { AnvilBackend } from "./api";
-import { RBAC, type Role } from "./rbac";
+import { MATRIX, RBAC, type BaseRole, type Role } from "./rbac";
+import { NAV } from "./nav";
 
 export type NavDisabledMap = Record<string, string[]>;
 
@@ -68,4 +69,49 @@ export const applyNavSettingsLocal = (map: NavDisabledMap): void => {
   }
   disabledByRole = next;
   emitChange();
+};
+
+// The sidebar and the phone tabs: RBAC read access intersected with this
+// setting. app.tsx passes the result to both Shell and MobileShell.
+export const visibleNav = <T extends { items: Array<{ id: string }> }>(groups: T[]): T[] =>
+  RBAC.filterNav(groups)
+    .map((g) => ({ ...g, items: g.items.filter((it) => isNavEnabled(it.id)) }))
+    .filter((g) => g.items.length > 0);
+
+// True when the base role's RBAC cell reaches nav item `navId` at all.
+export const hasRoleAccess = (navId: string, role: string): boolean =>
+  /[rwax]/.test((MATRIX[navId] && MATRIX[navId][role as BaseRole]) || "");
+
+// The Mode B pilot nav (docs/SO_EXECUTION_COHESION.md, C-D9): the ids each
+// pilot role keeps, and null keeps every item. New PO is the Inbox (intake).
+// Orders is Sales Orders (so), which holds the Register. The clerk is an
+// operator seat (C-D5).
+// shortcut: fixed to the C-D5 and C-D9 defaults, change it after DISC-1 with the pilot team.
+export const PILOT_NAV_KEEP: Record<string, string[] | null> = {
+  sales_engineer: ["home", "intake", "so", "approvals"],
+  operator: ["home", "so"],
+  admin: null,
+};
+
+// The visibility map after the pilot preset, and what it hides and shows for
+// each pilot role. As in the Navigation editor, only items the role can reach
+// by RBAC are stored or listed. Other roles keep their entries.
+export const pilotNavPreset = (current: NavDisabledMap): {
+  next: NavDisabledMap;
+  changes: Array<{ role: string; hide: string[]; show: string[] }>;
+} => {
+  const next: NavDisabledMap = { ...current };
+  const changes = Object.entries(PILOT_NAV_KEEP).map(([role, keep]) => {
+    const reachable = NAV.flatMap((g) => g.items.map((i) => i.id))
+      .filter((id) => !CORE_NAV_IDS.has(id) && hasRoleAccess(id, role));
+    const before = new Set(current[role] || []);
+    const off = keep ? reachable.filter((id) => !keep.includes(id)).sort() : [];
+    if (off.length) next[role] = off; else delete next[role];
+    return {
+      role,
+      hide: off.filter((id) => !before.has(id)),
+      show: reachable.filter((id) => before.has(id) && !off.includes(id)),
+    };
+  });
+  return { next, changes };
 };

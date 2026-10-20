@@ -128,6 +128,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/admin/item_reference.js | read |
 | src/api/admin/item_specifications.js | read, admin |
 | src/api/admin/item_usage.js | read |
+| src/api/admin/lane_readiness.js | admin |
 | src/api/admin/lead_times.js | read, admin |
 | src/api/admin/llm_settings.js | read, approve |
 | src/api/admin/lost_reasons.js | read, admin |

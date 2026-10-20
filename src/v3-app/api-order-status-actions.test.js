@@ -153,7 +153,9 @@ describe("the reason lands in the audit", () => {
   });
 });
 
-describe("an approved Mode B order after the approval expired", () => {
+// No tenant_settings row here, so the mode reads as A and the 24 h expiry
+// applies. Mode B (no expiry) is in api-orders-approval-ttl.modeB.test.js.
+describe("an approved order after the approval expired", () => {
   it("can be cancelled", async () => {
     seed(expiredApproval());
     const res = await patch({ status: "CANCELLED", reason: "Customer cancelled by phone" });

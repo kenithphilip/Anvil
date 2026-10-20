@@ -41,18 +41,28 @@ export const WITHDRAW_STATUSES = Object.freeze(["CANCELLED", "DRAFT"]);
 export const isWithdrawal = (prevStatus, nextStatus) =>
   !!nextStatus && nextStatus !== prevStatus && WITHDRAW_STATUSES.includes(nextStatus);
 
+// How long an approval lasts in Mode A. The server sets it, never the client.
+export const APPROVAL_TTL_MS = 24 * 3600 * 1000;
+
 // True when an expired approval must refuse this PATCH with a 409.
 //
-// The approval expires 24 h after it is given. That used to refuse EVERY
-// status change, cancel and return included. In Mode B the order rests at
-// APPROVED (nobody pushes it), so after a day it could be neither cancelled
-// nor returned. A withdrawal does not rely on the approval, so it passes now.
-// Every move that does rely on the approval (an export to Tally, a failed
-// import) is still refused. The expiry policy itself is an owner decision
-// (audit PR 19, decision 11) and is not changed here.
-export const approvalExpiryBlocks = ({ prev, body, intendedAction = null, now = Date.now() } = {}) => {
-  if (!prev || !prev.approval || !prev.approval_expires_at) return false;
-  if (!(new Date(prev.approval_expires_at).getTime() < now)) return false;
+// In Mode A the approval expires 24 h after it is given. That used to refuse
+// EVERY status change, cancel and return included. A withdrawal does not rely
+// on the approval, so it passes. Every move that does rely on the approval (an
+// export to Tally, a failed import) is refused after the expiry.
+//
+// In Mode B an approval does not expire (C-11, decision C-D8): the order rests
+// at APPROVED while a clerk keys the ERP, so an expiry only refused its later
+// status moves. This includes an approval stored with a 24 h expiry before
+// C-11. A line edit still clears the approval (orders/[id].js).
+//
+// An approval given in Mode B has no stored expiry. If the tenant is now in
+// Mode A, it expires 24 h after approved_at, so it does not escape the rule.
+export const approvalExpiryBlocks = ({ prev, body, intendedAction = null, modeB = false, now = Date.now() } = {}) => {
+  if (!prev || !prev.approval || modeB) return false;
+  const expiresAt = prev.approval_expires_at ? new Date(prev.approval_expires_at).getTime()
+    : prev.approved_at ? new Date(prev.approved_at).getTime() + APPROVAL_TTL_MS : NaN;
+  if (!(expiresAt < now)) return false;
   if (!body || !body.status || body.status === prev.status) return false;
   if (intendedAction === "approve") return false;
   if (isWithdrawal(prev.status, body.status)) return false;

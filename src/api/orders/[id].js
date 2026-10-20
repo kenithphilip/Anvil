@@ -3,7 +3,8 @@ import { resolveContext, requirePermission } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { evaluateApprovalsForOrder } from "../_lib/approval-evaluator.js";
-import { approvalExpiryBlocks, approvalClearedByReturn } from "../_lib/order-status-actions.js";
+import { approvalExpiryBlocks, approvalClearedByReturn, APPROVAL_TTL_MS } from "../_lib/order-status-actions.js";
+import { isModeB } from "../_lib/so-processing-mode.js";
 import { lineCandidates, lineSapCandidates } from "../_lib/item-mapper.js";
 import { upsertCustomerPart } from "../_lib/item-customer-parts.js";
 import { promoteApprovedOrder } from "../eval/promote.js";
@@ -185,9 +186,13 @@ export default async function handler(req, res) {
       }
 
       const intendedAction = body.intendedAction || (body.status === "APPROVED" ? "approve" : body.status === "EXPORTED_TO_TALLY" ? "export_tally" : null);
+      // In Mode B an approval does not expire (C-D8). Read only for a status
+      // move, the one PATCH the expiry acts on. A failed read is Mode A, the
+      // stricter 24 h rule.
+      const modeB = body.status ? await isModeB(svc, ctx.tenantId).catch(() => false) : false;
       // A cancel or a return for fix passes an expired approval (it withdraws
       // the order from it); every other status change is refused as before.
-      if (approvalExpiryBlocks({ prev, body, intendedAction })) {
+      if (approvalExpiryBlocks({ prev, body, intendedAction, modeB })) {
         return json(res, 409, { error: { message: "Approval expired. Re-approve before updating." } });
       }
       if (prev.approval && Array.isArray(prev.approval_actions) && prev.approval_actions.length && intendedAction && !prev.approval_actions.includes(intendedAction) && body.status && body.status !== prev.status) {
@@ -249,8 +254,9 @@ export default async function handler(req, res) {
         patch.approval = { ...body.approval, approvedBy: ctx.user ? ctx.user.id : null };
         patch.approved_at = new Date().toISOString();
         patch.approved_by = ctx.user ? ctx.user.id : null;
-        const ttlHours = Number(body.approval.ttlHours || 24);
-        patch.approval_expires_at = new Date(Date.now() + ttlHours * 3600 * 1000).toISOString();
+        // The server sets the expiry: 24 h in Mode A, none in Mode B. A client
+        // ttlHours is ignored (1e6 gave an approval that never expired).
+        patch.approval_expires_at = modeB ? null : new Date(Date.now() + APPROVAL_TTL_MS).toISOString();
         patch.approval_actions = Array.isArray(body.approval.approvedActions) && body.approval.approvedActions.length
           ? body.approval.approvedActions
           : ["approve", "export_tally", "create_source_pos", "send_customer_ack"];

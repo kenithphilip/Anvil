@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, approvalPatch, isStaleApproval, NO_PAYLOAD_HASH_MESSAGE, STALE_APPROVAL_MESSAGE } from "../lib/helpers";
+import { ageLabel, approvalPatch, fmtOrderValue, isStaleApproval, NO_PAYLOAD_HASH_MESSAGE, STALE_APPROVAL_MESSAGE } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle, fmtINR } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { RBAC } from "../lib/rbac";
@@ -85,7 +85,6 @@ const SOReviewDrawer: React.FC<{
 
   const order = state.data?.order || state.data;
   const lines = order?.result?.salesOrder?.lineItems || [];
-  const grandTotal = Number(order?.result?.salesOrder?.grandTotal) || 0;
   const customer = order?.result?.salesOrder?.customer || {};
   const submitNote = String(order?.preflight_payload?.submit_note || "").trim();
 
@@ -144,7 +143,7 @@ const SOReviewDrawer: React.FC<{
               </div>
             </Card>
 
-            <Card title={`Line items (${lines.length})`} eyebrow={`grand total ${grandTotal ? fmtINR(grandTotal) : "-"}`}>
+            <Card title={`Line items (${lines.length})`} eyebrow={`value ${fmtOrderValue(order)}`}>
               {lines.length === 0 ? (
                 <div className="body" style={{ color: "var(--ink-3)" }}>No lines extracted on this order.</div>
               ) : (

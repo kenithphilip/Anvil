@@ -96,7 +96,7 @@ describe("PipelineKanban card", () => {
 
     const card = within((await screen.findByText("PO-4471")).closest("a") as HTMLElement);
     expect(card.getByText("Heron Castings")).toBeTruthy();
-    expect(card.getByText("₹1.2L")).toBeTruthy();
+    expect(card.getByText("₹ 120k")).toBeTruthy();
     expect(card.getByText("3 lines")).toBeTruthy();
   });
 });

@@ -3,6 +3,8 @@
 // top-level globals. Now plain ESM exports with explicit types.
 
 import { useState, useEffect } from "react";
+import { STAGE_LABELS } from "../../api/_lib/order-stage.js";
+import { orderValue } from "../../api/_lib/order-value.js";
 
 export interface FetchState<T> {
   data: T | null;
@@ -123,22 +125,59 @@ export const fmtDate = (
 
 export interface StageChip { label: string; k: "info" | "warn" | "good" | "bad" | "ghost" | string; }
 
-// Map order_status enum to a v3 chip { label, k }.
-export const stageOf = (status: string | null | undefined): StageChip => {
-  const map: Record<string, StageChip> = {
-    DRAFT: { label: "intake", k: "info" },
-    PENDING_REVIEW: { label: "validate", k: "warn" },
-    APPROVED: { label: "approval", k: "good" },
-    BLOCKED: { label: "blocked", k: "bad" },
-    DUPLICATE: { label: "duplicate", k: "warn" },
-    REUSED: { label: "reused", k: "info" },
-    EXPORTED_TO_TALLY: { label: "tally", k: "info" },
-    FAILED_TALLY_IMPORT: { label: "tally fail", k: "bad" },
-    RECONCILED: { label: "shipped", k: "good" },
-    CANCELLED: { label: "cancelled", k: "ghost" },
-  };
-  return map[status as string] || { label: (status || "draft").toLowerCase(), k: "ghost" };
+// The order's execution stage (plan R-M1). The server derives it
+// (src/api/_lib/order-stage.js) and sends it as `order.stage` on every order
+// list, so every screen shows the same answer under the same label.
+export interface OrderStage { stage: string; since?: string | null; holder_role?: string | null; next_action?: string | null }
+export interface StagedOrder { status?: string | null; stage?: OrderStage | null }
+
+export const stageLabel = (key: string | null | undefined): string => STAGE_LABELS[key as string] || String(key || "");
+
+// shortcut: a row with no `stage` (an endpoint C-9 did not change, or a card
+// moved on the client) is read from its status alone, as Mode A with no
+// handoff or ERP evidence; upgrade when every order endpoint sends `stage`.
+const STAGE_OF_STATUS: Record<string, string> = {
+  DRAFT: "verifying", BLOCKED: "verifying", DUPLICATE: "verifying", REUSED: "verifying",
+  PENDING_REVIEW: "in_approval", APPROVED: "approved", FAILED_TALLY_IMPORT: "approved",
+  EXPORTED_TO_TALLY: "keyed", RECONCILED: "verified", CANCELLED: "cancelled",
 };
+
+// The stage key, or null for a status this screen does not know.
+export const stageKeyOf = (o: StagedOrder | null | undefined): string | null =>
+  o?.stage?.stage || STAGE_OF_STATUS[o?.status as string] || null;
+
+// True while the order has a next move: not verified, not cancelled, and not
+// parked (BLOCKED, DUPLICATE and REUSED have no forward step).
+export const awaitsAction = (o: StagedOrder | null | undefined): boolean => {
+  if (o?.stage?.next_action) return o.stage.next_action !== "none";
+  const k = stageKeyOf(o);
+  return k !== "verified" && k !== "cancelled";
+};
+
+const STAGE_TONE: Record<string, string> = {
+  received: "info", verifying: "info", returned: "warn", in_approval: "warn", approved: "good",
+  handed_off: "info", keyed_unverified: "warn", keyed: "good", verified: "good", cancelled: "ghost",
+};
+// The statuses whose stage label hides why the order waits.
+const STATUS_NOTE: Record<string, [string, string]> = {
+  BLOCKED: ["blocked", "bad"], DUPLICATE: ["duplicate", "warn"], REUSED: ["reused", "info"], FAILED_TALLY_IMPORT: ["push failed", "bad"],
+};
+
+// The chip { label, k } for an order's stage.
+export const stageChip = (o: StagedOrder | null | undefined): StageChip => {
+  const key = stageKeyOf(o);
+  if (!key) return { label: String(o?.status || "draft").toLowerCase(), k: "ghost" };
+  const note = STATUS_NOTE[o?.status as string];
+  return note ? { label: stageLabel(key) + ", " + note[0], k: note[1] } : { label: stageLabel(key), k: STAGE_TONE[key] || "ghost" };
+};
+
+// The order's value in its own currency (orderValue: the printed grand total,
+// else the line sum). compact: lakhs and thousands for INR, as lists show it.
+export { orderValue };
+export const fmtOrderValue = (
+  o: { result?: any } | null | undefined,
+  opts: { compact?: boolean; lines?: unknown[] } = {},
+): string => fmtCurrency(orderValue(o, opts.lines), o?.result?.salesOrder?.currency || "INR", { compact: opts.compact });
 
 // Severity bucket used to color a row at a glance.
 export const sevOf = (order: { status?: string } | null | undefined): "high" | "med" | "low" => {

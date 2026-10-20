@@ -5,6 +5,7 @@ import { SEVERITY_LEVELS } from "./terms/taxonomy.js";
 import { needsDecision } from "./terms/compare.js";
 import { OPEN_DECISIONS } from "./terms/decisions.js";
 import { withStageColumns } from "./order-stage.js";
+import { orderValue } from "./order-value.js";
 //
 // In Mode B Anvil is the repository of every sales order received and
 // analysed, while the ERP holds the voucher. The orders list shows an order's
@@ -176,7 +177,7 @@ export const registerRow = (row, { run = null, erp = null, terms = null, stage =
     customer_name: row.customer?.customer_name || so.customer?.name || null,
     po_number: row.po_number || null,
     po_date: row.po_date || null,
-    value: num(so.grandTotal),
+    value: orderValue({ result: { salesOrder: so } }),
     currency: so.currency || so.customer?.currency || null,
     line_count: lines,
     extraction: extractionOf(row, run, lines),

@@ -1,0 +1,178 @@
+// Per-line tax and total math, shared between the recon table cell
+// renderer and the table-footer aggregator so the displayed sum
+// always matches the sum of displayed line totals (no paise drift).
+//
+// Three input paths are supported, in priority order:
+//
+//   1. Explicit per-component PER-UNIT amounts. This is the
+//      shape of a PO that prints each tax per unit: each line carries CGST, SGST, IGST,
+//      UTGST, cess, excise duty, ed.cess, plus auxiliary costs
+//      tooling / P&F / others. When ANY of these is set the
+//      line's tax + line total are computed from them and
+//      `rate` is treated as the tax-exclusive ex-price.
+//
+//   2. gst_pct legacy fast-path. The pre-May-2026 shape:
+//      `rate` is the ex-price and `gst_pct` carries the
+//      consolidated GST rate as a percentage. Tax = qty * rate
+//      * pct / 100. No auxiliary costs.
+//
+//   3. lineTotal passthrough. If neither of the above is set
+//      but the upstream extractor provided a lineTotal, derive
+//      tax from (lineTotal - taxable) so we don't lose value.
+//
+// All component values are interpreted as PER-UNIT amounts, the
+// same way such a PO prints SGST 4,229.190 next to a 2-unit
+// row and a 110,898.760 line total: per-unit, not per-line.
+
+export const TAX_AMOUNT_KEYS = [
+  "cgst_amount",
+  "sgst_amount",
+  "igst_amount",
+  "utgst_amount",
+  "cess_amount",
+  "excise_amount",
+  "ed_cess_amount",
+];
+
+export const AUX_AMOUNT_KEYS = [
+  "tooling_amount",
+  "p_and_f_amount",
+  "others_amount",
+];
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+const readNum = (line, key) => {
+  const v = line[key];
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+// Returns { qty, rate, taxable, tax, aux, lineTotal, source, components }:
+// rate is the tax-exclusive unit price, taxable is qty * rate, lineTotal is
+// taxable + tax + aux, source is "explicit", "gst_pct", "lineTotal" or
+// "none", and components holds the per-unit amounts that were set.
+// PURE. The SO workspace and order-value.js both read it.
+export const computeLineTotals = (line) => {
+  const ln = line || {};
+  const qty = Number(ln.qty ?? ln.quantity ?? 0) || 0;
+  const rate = Number(ln.rate ?? ln.unitPrice ?? 0) || 0;
+  const taxable = round2(qty * rate);
+
+  // Path 1: explicit per-component tax + aux amounts.
+  let hasExplicit = false;
+  let taxPerUnit = 0;
+  let auxPerUnit = 0;
+  const components = {};
+  for (const k of TAX_AMOUNT_KEYS) {
+    const v = readNum(ln, k);
+    if (v > 0) {
+      components[k] = v;
+      taxPerUnit += v;
+      hasExplicit = true;
+    }
+  }
+  for (const k of AUX_AMOUNT_KEYS) {
+    const v = readNum(ln, k);
+    if (v > 0) {
+      components[k] = v;
+      auxPerUnit += v;
+      hasExplicit = true;
+    }
+  }
+  if (hasExplicit) {
+    const tax = round2(qty * taxPerUnit);
+    const aux = round2(qty * auxPerUnit);
+    const lineTotal = round2(taxable + tax + aux);
+    return { qty, rate, taxable, tax, aux, lineTotal, source: "explicit", components };
+  }
+
+  // Path 2: absolute per-line tax, read straight off a table column.
+  //
+  // A table parser reads "Taxes 180.14 | Line Total 1,180.94" off the page as
+  // ABSOLUTE per-line figures. Everything above models per-UNIT components,
+  // which is what an LLM reconstructs from a stacked layout, so multiplying
+  // these by qty would double-count. They are a separate path for that reason.
+  //
+  // This existed nowhere before, so llamaparse's tax column was silently
+  // dropped: a 44-line PO displayed Rs 15,15,691.80 (taxable only) against a
+  // printed Rs 18,25,261.52. Deliberately gated on taxTotal being present, so
+  // every line that lacks it keeps its previous behaviour exactly.
+  const taxTotal = Number(ln.taxTotal ?? 0) || 0;
+  if (taxTotal > 0) {
+    const printedTotal = Number(ln.lineTotal ?? 0) || 0;
+    const tax = round2(taxTotal);
+    // Trust the printed line total when the document gives one; anything it
+    // carries beyond taxable + tax is auxiliary cost (freight, tooling) rather
+    // than something to discard.
+    const lineTotal = printedTotal > 0 ? round2(printedTotal) : round2(taxable + tax);
+    const aux = printedTotal > 0 ? round2(Math.max(0, printedTotal - taxable - tax)) : 0;
+    return { qty, rate, taxable, tax, aux, lineTotal, source: "lineTotal", components: {} };
+  }
+
+  // Path 3: gst_pct legacy fast-path.
+  const gstPct = Number(ln.gst_pct ?? ln.gstRate ?? ln.rate_of_duty_pct ?? 0) || 0;
+  if (gstPct > 0) {
+    const tax = round2((taxable * gstPct) / 100);
+    const lineTotal = round2(taxable + tax);
+    return { qty, rate, taxable, tax, aux: 0, lineTotal, source: "gst_pct", components: {} };
+  }
+
+  // Path 3: explicit lineTotal passthrough. Derive tax as the
+  // remainder so we do not silently drop value from the
+  // extractor's reported total.
+  const lineTotalProvided = Number(ln.lineTotal ?? 0) || 0;
+  if (lineTotalProvided > 0) {
+    return {
+      qty, rate, taxable,
+      tax: round2(Math.max(0, lineTotalProvided - taxable)),
+      aux: 0,
+      lineTotal: round2(lineTotalProvided),
+      source: "lineTotal",
+      components: {},
+    };
+  }
+
+  return { qty, rate, taxable, tax: 0, aux: 0, lineTotal: taxable, source: "none", components: {} };
+};
+
+// Per-unit-tax label map for the UI: every component shows up
+// with a short, recognisable label. Kept here so the recon
+// table and any future tax-summary view read the same strings.
+export const COMPONENT_LABEL = {
+  cgst_amount: "CGST",
+  sgst_amount: "SGST",
+  igst_amount: "IGST",
+  utgst_amount: "UTGST",
+  cess_amount: "Cess",
+  excise_amount: "Excise duty",
+  ed_cess_amount: "Ed. cess",
+  tooling_amount: "Tooling",
+  p_and_f_amount: "P&F",
+  others_amount: "Others",
+};
+
+// Canonical-key -> candidate line-field aliases. Used to read a line's value
+// under any of its historical field names (extractor + DB variants).
+export const LINE_ALIAS = {
+  itemCode: ["itemCode", "partNumber", "sku", "code"],
+  description: ["description", "name", "item"],
+  qty: ["qty", "quantity"],
+  rate: ["rate", "unitPrice"],
+  uom: ["uom", "unit"],
+  hsn: ["hsn", "hsn_sac", "hsnCode"],
+  gst_pct: ["gst_pct", "gstRate", "rate_of_duty_pct"],
+  // Per-line tax-component aliases. Each one is the per-unit amount
+  // (matching that PO column layout). Identity maps because the
+  // extractor and the DB use the same key.
+  cgst_amount:    ["cgst_amount"],
+  sgst_amount:    ["sgst_amount"],
+  igst_amount:    ["igst_amount"],
+  utgst_amount:   ["utgst_amount"],
+  cess_amount:    ["cess_amount"],
+  excise_amount:  ["excise_amount"],
+  ed_cess_amount: ["ed_cess_amount"],
+  tooling_amount: ["tooling_amount"],
+  p_and_f_amount: ["p_and_f_amount"],
+  others_amount:  ["others_amount"],
+};

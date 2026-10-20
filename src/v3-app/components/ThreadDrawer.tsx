@@ -19,7 +19,7 @@ import React, { useEffect, useState } from "react";
 import { Icon } from "../lib/icons";
 import { Chip } from "../lib/primitives";
 import { AnvilBackend } from "../lib/api";
-import { ageLabel, stageOf, draftLabel } from "../lib/helpers";
+import { ageLabel, stageChip, draftLabel } from "../lib/helpers";
 
 export interface ThreadDrawerProps {
   open: boolean;
@@ -174,7 +174,7 @@ export const ThreadDrawer: React.FC<ThreadDrawerProps> = ({ open, onClose }) => 
   // meaningful (DRAFT-NEW-<id4>) rather than the empty string.
   const headerLabel = draftLabel(order.data ? o : (orderId ? { id: orderId } : null));
   const customer = o.customer?.customer_name || o.customer_id || "";
-  const stage = stageOf(o.status);
+  const stage = stageChip(o);
 
   return (
     <div

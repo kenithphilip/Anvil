@@ -178,7 +178,8 @@ export default async function handler(req, res) {
           balance_qty: rl.balance_qty,
           uom: rl.uom || null,
           rate,
-          value: rate != null && ordered != null ? Math.round(rate * ordered * 100) / 100 : null,
+          // The open value: what is still to be supplied, not the whole line.
+          value: rate != null && rl.balance_qty != null ? Math.round(rate * rl.balance_qty * 100) / 100 : null,
 
           promised_date: schedByIndex.get(String(i)) ? dateOnly(schedByIndex.get(String(i))) : dateOnly(order.committed_delivery_date),
           promised_source: schedByIndex.get(String(i)) ? "schedule_line" : (order.committed_delivery_date ? "order" : null),

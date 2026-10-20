@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, draftLabel, fmtINRShort, stageOf, useFetch } from "../lib/helpers";
+import { ageLabel, draftLabel, fmtOrderValue, stageChip, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
@@ -178,14 +178,13 @@ const WiredTallyPush = () => {
               </tr></thead>
               <tbody>
                 {queueRows.map((o) => {
-                  const st = stageOf(o.status);
-                  const value = Number(o.result?.salesOrder?.grandTotal) || 0;
+                  const st = stageChip(o);
                   const hash = o.payload_hash || (o.approval && o.approval.payloadHash) || null;
                   return (
                     <tr key={o.id}>
                       <td className="mono"><span className="pri">{draftLabel(o)}</span></td>
                       <td>{o.customer?.customer_name || o.customer_id?.slice(0, 8) || "—"}</td>
-                      <td className="r mono">{value ? fmtINRShort(value) : "—"}</td>
+                      <td className="r mono">{fmtOrderValue(o, { compact: true })}</td>
                       <td className="mono-sm">{shortHash(hash)}</td>
                       <td><Chip k={st.k}>{st.label}</Chip></td>
                       <td className="r mono">{ageLabel(o.updated_at || o.created_at)}</td>
@@ -253,14 +252,13 @@ const WiredTallyPush = () => {
               </tr></thead>
               <tbody>
                 {pushedRows.slice(0, 50).map((o) => {
-                  const st = stageOf(o.status);
-                  const value = Number(o.result?.salesOrder?.grandTotal) || 0;
+                  const st = stageChip(o);
                   const hash = o.payload_hash || (o.approval && o.approval.payloadHash) || null;
                   return (
                     <tr key={o.id}>
                       <td className="mono"><span className="pri">{draftLabel(o)}</span></td>
                       <td>{o.customer?.customer_name || "—"}</td>
-                      <td className="r mono">{value ? fmtINRShort(value) : "—"}</td>
+                      <td className="r mono">{fmtOrderValue(o, { compact: true })}</td>
                       <td className="mono-sm">{shortHash(hash)}</td>
                       <td><Chip k={st.k}>{st.label}</Chip></td>
                       <td className="r mono">{ageLabel(o.updated_at || o.created_at)}</td>

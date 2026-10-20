@@ -14,7 +14,8 @@ const ROWS = [
     value: 1000, currency: "INR", line_count: 2,
     extraction: { status: "ok", confidence: 0.92, run_id: "r1" },
     reconciliation: { analysed: true, matched: 1, total: 2, line_flags: 1, terms_flags: 2 },
-    status: "APPROVED", erp_so: { attached: true, voucher_no: "SO-77" }, handoff: { status: "not_sent" },
+    status: "APPROVED", stage: { stage: "keyed", next_action: "verify_in_erp" },
+    erp_so: { attached: true, voucher_no: "SO-77" }, handoff: { status: "not_sent" },
   },
   {
     id: "o2", received_at: "2026-10-03T05:00:00.000Z", channel: "whatsapp", customer_id: null,
@@ -54,11 +55,11 @@ describe("SO register: rows", () => {
     const rows = Array.from(container.querySelectorAll("tbody tr"));
     expect(rows).toHaveLength(2);
     const first = rows[0].textContent || "";
-    for (const text of ["Email", "Acme Test Works", "PO-T-001", "read", "92%", "1/2 matched", "1 line flag", "2 terms flags", "approval", "SO-77", "not sent"]) {
+    for (const text of ["Email", "Acme Test Works", "PO-T-001", "read", "92%", "1/2 matched", "1 line flag", "2 terms flags", "Keyed in ERP", "SO-77", "not sent"]) {
       expect(first).toContain(text);
     }
     const second = rows[1].textContent || "";
-    for (const text of ["WhatsApp", "PO-T-002", "not extracted", "not analysed", "intake", "none", "not sent"]) {
+    for (const text of ["WhatsApp", "PO-T-002", "not extracted", "not analysed", "Verifying", "none", "not sent"]) {
       expect(second).toContain(text);
     }
     expect(container.textContent).toContain("120 orders");

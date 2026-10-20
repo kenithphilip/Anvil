@@ -6,6 +6,7 @@
 //   DELETE ?id=  remove threshold
 
 import { orderMargin } from "../_lib/order-margin.js";
+import { orderValue } from "../_lib/order-value.js";
 import { orderStage } from "../_lib/order-stage.js";
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
 import { resolveContext, requirePermission, hasAction } from "../_lib/auth.js";
@@ -19,7 +20,6 @@ import { recordAudit } from "../_lib/audit.js";
 const orderQueueFields = (ord, seesCost) => {
   const so = ord?.result?.salesOrder || null;
   const lines = Array.isArray(so?.lineItems) ? so.lineItems : [];
-  const grand = so ? Number(so.grandTotal) : NaN;
   const m = ord && seesCost ? orderMargin(ord) : null;
   return {
     po_number: ord?.po_number || null,
@@ -29,7 +29,7 @@ const orderQueueFields = (ord, seesCost) => {
     gstin: ord?.customer?.gstin || null,
     state_code: ord?.customer?.state_code || null,
     line_count: lines.length,
-    value_inr: Number.isFinite(grand) ? grand : null,
+    value_inr: orderValue(ord),
     margin_pct: m ? m.marginPct : null,
     // The approver has to be able to tell "thin margin" from "we never
     // costed this". Null margin_pct alone cannot say which, and the

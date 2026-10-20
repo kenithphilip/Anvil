@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, draftLabel, fmtINRShort, stageOf, useFetch } from "../lib/helpers";
+import { ageLabel, draftLabel, fmtINRShort, orderValue, stageChip, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
@@ -60,7 +60,7 @@ const WiredTallyReconcile = () => {
     }
   };
 
-  const totalValue = rows.reduce((s: number, o: any) => s + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
+  const totalValue = rows.reduce((s: number, o: any) => s + (orderValue(o) || 0), 0);
   const oldest = rows.length ? ageLabel(rows[rows.length - 1].updated_at || rows[rows.length - 1].created_at) : "—";
 
   const findingRows: any[] = (findings.data as any)?.findings || [];
@@ -298,7 +298,7 @@ const WiredTallyReconcile = () => {
               </tr></thead>
               <tbody>
                 {rows.map((o: any) => {
-                  const st = stageOf(o.status);
+                  const st = stageChip(o);
                   const pushedAt = o.updated_at || o.created_at;
                   const voucher =
                     (o.result && o.result.tally && (o.result.tally.voucherId || o.result.tally.voucherNo)) ||

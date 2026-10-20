@@ -105,7 +105,7 @@ export const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, con
     const discPct = ln.discount_pct != null ? Number(ln.discount_pct) : null;
     return {
       sl: i + 1,
-      description: pick(ln.description, ln.itemName) || "—",
+      description: pick(ln.description, ln.itemName) || "-",
       hsn: pick(ln.hsn, ln.hsn_sac) || "",
       custPartNo: pick(ln.customer_part_number, ln.cust_part_no, ln.customerPartNumber) || "",
       partNo: partNo ? partNo + partOriginMarker(ln, partNo, pick(ln.description, ln.itemName)) : "",
@@ -171,7 +171,7 @@ export const buildSalesOrderData = ({ order, customer, consigneeLoc, seller, con
     message: order.so_message || null,
     currency: soData.currency || "INR",
     seller: {
-      name: seller?.legal_name || seller?.trade_name || "—",
+      name: seller?.legal_name || seller?.trade_name || "-",
       addressLines: addrLines(seller?.address1, seller?.address2, seller?.locality, seller?.pincode ? "PIN " + seller.pincode : null),
       gstin: seller?.gstin || null,
       stateName: seller?.state_name || null,

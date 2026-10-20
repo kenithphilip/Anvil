@@ -8,7 +8,7 @@
 //
 // No prices in the email (decision 5). The SO PDF attachment carries them.
 
-import { classifyOrigin, OBARA_COUNTRY as ORIGIN_COUNTRIES } from "./pending-so/part-origin.js";
+import { classifyOrigin, ORIGIN_COUNTRY } from "./pending-so/part-origin.js";
 import {
   poRequiredBy, committedDate, suggestedCommittedDate, lineDueDate, fmtDueDate, readDate,
 } from "./order-delivery-date.js";
@@ -53,7 +53,7 @@ const pick = (...vals) => vals.map(str).find(Boolean) || "";
 const linesOf = (order) => (Array.isArray(order?.result?.salesOrder?.lineItems) ? order.result.salesOrder.lineItems : []);
 
 // item_master / quote source_country ("O-KOREA") -> origin and ISO country.
-const BY_SOURCE_COUNTRY = new Map(Object.values(ORIGIN_COUNTRIES).map((c) => [c.source_country, c]));
+const BY_SOURCE_COUNTRY = new Map(Object.values(ORIGIN_COUNTRY).map((c) => [c.source_country, c]));
 const countrySignal = (signal, value) => {
   const c = BY_SOURCE_COUNTRY.get(str(value).toUpperCase());
   return c ? { signal, origin: c.iso === "IN" ? "local" : "import", country: c.iso } : null;
@@ -233,11 +233,9 @@ const fmtDate = (v) => fmtDueDate(readDate(v)) || str(v);
 
 // The email (decision 5). Subject: "SO entry: PO <no> / <customer> / <n> lines".
 //   appUrl      PUBLIC_APP_URL, or "" (the link line then names the order id)
-//   replyToEngineer  true when replies go to the engineer, false when they go
-//                    to the tenant's Anvil inbound address
 export const handoffEmail = ({
   order, customerName, groups, fields, prefill, terms, schedules = [], attachments = [],
-  engineerName = "", appUrl = "", replyToEngineer = true,
+  engineerName = "", appUrl = "",
 }) => {
   const lines = linesOf(order);
   const poNo = str(order?.po_number) || "(no number)";
@@ -283,9 +281,7 @@ export const handoffEmail = ({
     "",
     "Attached: " + (attachments.length ? attachments.map((a) => a.label).join(", ") : "nothing") + ".",
     "",
-    replyToEngineer
-      ? "Sent from Anvil by " + who + ". Reply to this email to reach them."
-      : "Sent from Anvil by " + who + ". Reply to all: the reply reaches the order in Anvil, and " + who + " is in CC.",
+    "Sent from Anvil by " + who + ". Reply to this email to reach them.",
   ].join("\n");
 
   return {

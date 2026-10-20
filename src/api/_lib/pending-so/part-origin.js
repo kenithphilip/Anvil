@@ -27,7 +27,7 @@ import { splitPartFromDescription, looksLikePartCode } from "../docai/part-split
 // Obara subsidiary country letter -> canonical vocabularies. `source_country`
 // matches item_master.source_country / bom-format.js ("O-CHINA" etc.); `iso` is
 // the ISO-3166-alpha-2 the ItemDetailDrawer / delays.isForeign path expects.
-export const OBARA_COUNTRY = {
+export const ORIGIN_COUNTRY = {
   C: { iso: "CN", source_country: "O-CHINA", name: "China" },
   J: { iso: "JP", source_country: "O-JAPAN", name: "Japan" },
   K: { iso: "KR", source_country: "O-KOREA", name: "Korea" },
@@ -35,7 +35,7 @@ export const OBARA_COUNTRY = {
   F: { iso: "FR", source_country: "O-FRANCE", name: "France" },
   I: { iso: "IN", source_country: "O-INDIA", name: "India" },
 };
-const INDIA = OBARA_COUNTRY.I;
+const INDIA = ORIGIN_COUNTRY.I;
 
 // (O/C), ( O / K ), (O/c) — tolerant of spacing/case. Captures the letter.
 const ORIGIN_MARKER_RE = /\(\s*O\s*\/\s*([CJKTFIcjktfi])\s*\)/;
@@ -100,7 +100,7 @@ export const classifySourcePoRef = (ref) => {
   if (!m) return null;
   const kind = m[1].toUpperCase();          // WOPO | OIPO
   const c = m[2].toUpperCase();             // country letter
-  const country = OBARA_COUNTRY[c] || null;
+  const country = ORIGIN_COUNTRY[c] || null;
   const ref_prefix = ("" + m[1] + "O" + m[2]).toUpperCase();
   if (kind === "WOPO") {
     // Work order: always locally manufactured, regardless of the trailing letter.
@@ -123,7 +123,7 @@ const markerVerdict = (marker) => {
   if (marker === "-I") return { origin: "local", country: INDIA.iso, source_country: INDIA.source_country };
   const m = marker.match(/^O\/([CJKTFI])$/i);
   if (!m) return null;
-  const c = OBARA_COUNTRY[m[1].toUpperCase()];
+  const c = ORIGIN_COUNTRY[m[1].toUpperCase()];
   if (!c) return null;
   const local = c.iso === "IN";
   return { origin: local ? "local" : "import", country: c.iso, source_country: c.source_country };

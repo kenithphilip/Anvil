@@ -15,8 +15,7 @@
 //   - it may go before approval; the blockers below gate it;
 //   - an undecided critical terms flag blocks it (409 TERMS_UNDECIDED);
 //   - To is the admin's list, the engineer is in CC;
-//   - reply-to is the tenant's Anvil inbound address when one exists, else
-//     the engineer;
+//   - reply-to is the engineer (the owner's change to C-D12, until C-33);
 //   - no prices in the email; the SO PDF and the original PO are attached.
 //
 // It sends in the request, through sendCommunication. It never leaves a
@@ -34,7 +33,7 @@ import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { commsRow } from "../_lib/comms-row.js";
 import { sendCommunication } from "../_lib/comms-send.js";
-import { isEmailAddress, resolveInternalRecipients } from "../_lib/internal-recipients.js";
+import { resolveInternalRecipients } from "../_lib/internal-recipients.js";
 import { loadSalesOrderParts, renderSalesOrderPdf } from "../_lib/so-document.js";
 import { poDocumentOf, readTermsSettings, readTermsView } from "../_lib/terms/check.js";
 import { userDisplayNames } from "../_lib/assignee.js";
@@ -52,16 +51,6 @@ const refuse = (res, status, code, message, extra = {}) => json(res, status, { e
 // refused, never read as "not handed off" (section 9.4).
 const migrationMissing = (res) => refuse(res, 503, "migration_251_not_applied",
   "The handoff columns are not in this database yet. Apply supabase/migrations/" + MIGRATION + ", then retry.", { migration: MIGRATION });
-
-const lower = (v) => String(v).trim().toLowerCase();
-
-// The tenant's Anvil inbound address: the Postmark inbound address, else the
-// shared Outlook mailbox Anvil is subscribed to. Null when there is none.
-export const inboundAddress = (s) => {
-  if (isEmailAddress(s?.postmark_inbound_address)) return lower(s.postmark_inbound_address);
-  if (s?.graph_subscription_id && isEmailAddress(s?.graph_mailbox)) return lower(s.graph_mailbox);
-  return null;
-};
 
 const engineerOf = (ctx) => {
   const meta = ctx.user?.user_metadata || {};
@@ -106,8 +95,10 @@ const buildHandoff = async (svc, ctx, order, settings, input) => {
   const recipients = await resolveInternalRecipients(svc, tenantId, {
     to: settings.order_handoff_to, cc: settings.order_handoff_cc, engineer,
   });
-  const inbound = inboundAddress(settings);
-  const replyTo = inbound || recipients.reply_to;
+  // The resolver sets reply_to to the engineer. A clerk's reply sent to the
+  // tenant's inbound address would enter the Postmark pipeline as a new PO.
+  // shortcut: reply-to is the engineer until C-33 joins a clerk reply to its order; then use the tenant inbound address (C-D12).
+  const replyTo = recipients.reply_to;
   const poDocumentId = await poDocumentOf(svc, { id: order.id, source_document_id: order.preflight_payload?.source_document_id || null });
   const attachments = [
     { label: "SO PDF", filename: "SO-" + (order.po_number || order.id.slice(0, 8)) + ".pdf" },
@@ -116,7 +107,7 @@ const buildHandoff = async (svc, ctx, order, settings, input) => {
   const email = handoffEmail({
     order, customerName: parts.customer?.customer_name || order.result?.salesOrder?.customer?.name,
     groups, fields, prefill, terms, schedules: parts.schedules, attachments,
-    engineerName: engineer.name, appUrl: process.env.PUBLIC_APP_URL || "", replyToEngineer: !inbound,
+    engineerName: engineer.name, appUrl: process.env.PUBLIC_APP_URL || "",
   });
   const blockers = handoffBlockers({ order, groups, fields, undecidedCritical, recipients });
   return { parts, prefill, groups, fields, terms, undecidedCritical, recipients, replyTo, attachments, email, blockers };

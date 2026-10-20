@@ -1,11 +1,12 @@
-// Reply-to for the handoff (decision C-D12): the tenant's Anvil inbound
-// address when one exists, else the engineer. The engineer stays in CC and
+// Reply-to for the handoff: the engineer who sent it. The owner changed
+// C-D12 until C-33 exists: a clerk's reply to the tenant's inbound address
+// would enter the Postmark pipeline as a new PO. The engineer stays in CC and
 // the PO number is in the subject. The Graph branch of sendCommunication
 // passes reply_to too (SO_TERMS_AND_HANDOFF_SCOPE.md 8.1): the real
 // sendViaGraph runs here, and only the HTTP call is a stand-in.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { ORDER, freshState, asEngineer, settingsOf, handoffComms, callRoute } from "./test-support/handoff-harness.js";
+import { ORDER, OPERATOR, freshState, asEngineer, settingsOf, handoffComms, callRoute } from "./test-support/handoff-harness.js";
 
 const H = vi.hoisted(() => ({ s: null }));
 
@@ -40,7 +41,7 @@ beforeEach(() => {
 });
 
 describe("orders-handoff: reply-to", () => {
-  it("with no Anvil inbound address, replies go to the engineer, who is also in CC", async () => {
+  it("replies go to the engineer who sent it, who is also in CC", async () => {
     expect((await get()).body.recipients.reply_to).toBe("eng@example.com");
     await post();
     const m = H.s.mail[0];
@@ -51,34 +52,37 @@ describe("orders-handoff: reply-to", () => {
     expect(handoffComms(H.s)[0].reply_to).toBe("eng@example.com");
   });
 
-  it("with an inbound address, replies go to Anvil and the engineer stays in CC", async () => {
-    settingsOf(H.s).postmark_inbound_address = "Orders-In@Example.com";
-    expect((await get()).body.recipients.reply_to).toBe("orders-in@example.com");
+  it("the reply-to is whoever sends it: an operator's send replies to the operator", async () => {
+    H.s.ctx = { ...H.s.ctx, user: H.s.users[OPERATOR], role: "operator" };
+    await post();
+    expect(H.s.mail[0].replyTo).toBe("ops@example.com");
+    expect(H.s.mail[0].cc).toContain("ops@example.com");
+    expect(H.s.mail[0].body).toContain("Sent from Anvil by Test Operator.");
+  });
+
+  it("with a Postmark inbound address set, replies still go to the engineer, and the inbound address gets nothing", async () => {
+    settingsOf(H.s).postmark_inbound_address = "orders-in@example.com";
+    expect((await get()).body.recipients.reply_to).toBe("eng@example.com");
     await post();
     const m = H.s.mail[0];
-    expect(m.replyTo).toBe("orders-in@example.com");
-    expect(m.cc).toContain("eng@example.com");
-    expect(m.body).toContain("Reply to all");
+    expect(m.replyTo).toBe("eng@example.com");
+    expect(m.cc).toEqual(["eng@example.com"]);
+    expect(m.to).toBe("orders-desk@example.com");
   });
 
-  it("the shared Outlook mailbox Anvil watches counts as the inbound address", async () => {
+  it("with a watched Outlook mailbox, replies still go to the engineer", async () => {
     Object.assign(settingsOf(H.s), { graph_mailbox: "shared-box@example.com", graph_subscription_id: "sub-1" });
-    expect((await get()).body.recipients.reply_to).toBe("shared-box@example.com");
-  });
-
-  it("a malformed inbound address is not used", async () => {
-    settingsOf(H.s).postmark_inbound_address = "not an address";
     expect((await get()).body.recipients.reply_to).toBe("eng@example.com");
   });
 
-  it("on Graph, the message sent carries the reply-to, the CC and the PO number", async () => {
+  it("on Graph, the message sent carries the engineer as reply-to, the CC and the PO number", async () => {
     H.s.graphOn = true;
     settingsOf(H.s).postmark_inbound_address = "orders-in@example.com";
     const r = await post();
     expect(r.body.status).toBe("sent");
     expect(H.s.mail).toHaveLength(0);
     const draft = H.s.fetches.find((f) => /\/messages$/.test(f.url));
-    expect(draft.body.replyTo).toEqual([{ emailAddress: { address: "orders-in@example.com" } }]);
+    expect(draft.body.replyTo).toEqual([{ emailAddress: { address: "eng@example.com" } }]);
     expect(draft.body.ccRecipients).toEqual([{ emailAddress: { address: "eng@example.com" } }]);
     expect(draft.body.subject).toContain("PO PO-T-100");
     expect(draft.body.attachments.map((a) => a.name)).toEqual(["SO-PO-T-100.pdf", "po.pdf"]);

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, fmtINRShort, sevOf, stageOf, draftLabel } from "../lib/helpers";
+import { ageLabel, awaitsAction, fmtINRShort, fmtOrderValue, orderValue, sevOf, stageChip, stageKeyOf, stageLabel, draftLabel } from "../lib/helpers";
+import { STAGES } from "../../api/_lib/order-stage.js";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, Sev, WSTabs, WSTitle, rowActivateProps } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
@@ -70,16 +71,11 @@ const WiredSOList = () => {
     return () => { cancel = true; };
   }, []);
 
+  // One tab per stage, labelled as every other screen labels it.
   const tabs = [
     { id: "all",      label: "All",        match: () => true },
     { id: "mine",     label: "Mine",       match: (o) => !!meId && (o.approved_by === meId) },
-    { id: "intake",   label: "Intake",     match: (o) => o.status === "DRAFT" },
-    { id: "validate", label: "Validate",   match: (o) => o.status === "PENDING_REVIEW" },
-    { id: "approval", label: "Approval",   match: (o) => o.status === "APPROVED" },
-    { id: "tally",    label: "Tally",      match: (o) => o.status === "EXPORTED_TO_TALLY" || o.status === "FAILED_TALLY_IMPORT" },
-    { id: "shipped",  label: "Shipped",    match: (o) => o.status === "RECONCILED" },
-    { id: "blocked",  label: "Blocked",    match: (o) => o.status === "BLOCKED" || o.status === "DUPLICATE" },
-    { id: "closed",   label: "Closed",     match: (o) => o.status === "CANCELLED" },
+    ...STAGES.map((k) => ({ id: k, label: stageLabel(k), match: (o) => stageKeyOf(o) === k })),
   ];
 
   const orderCurrency = (o: any) => o.result?.salesOrder?.currency || o.currency || "INR";
@@ -118,9 +114,8 @@ const WiredSOList = () => {
 
   // Aggregate KPIs
   const total = (orders.rows || []).length;
-  const inFlight = (orders.rows || []).filter((o) => !["RECONCILED", "CANCELLED"].includes(o.status)).length;
+  const inFlight = (orders.rows || []).filter(awaitsAction).length;
   const completed = (orders.rows || []).filter((o) => o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED");
-  const sumValue = completed.reduce((s, o) => s + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
   const blocked = (orders.rows || []).filter((o) => o.status === "BLOCKED").length;
   // Push success rate: of every order that has been pushed (or
   // failed to push), what share succeeded. RECONCILED counts as
@@ -161,7 +156,7 @@ const WiredSOList = () => {
     const t = o.updated_at || o.created_at;
     return t && new Date(t).getTime() >= monthStart.getTime();
   });
-  const pushedValueMtd = pushedMtd.reduce((s, o) => s + (Number(o.result?.salesOrder?.grandTotal) || 0), 0);
+  const pushedValueMtd = pushedMtd.reduce((s, o) => s + (orderValue(o) || 0), 0);
 
   return (
     <>
@@ -184,7 +179,8 @@ const WiredSOList = () => {
         </>}
       />
       <WSTabs
-        tabs={tabs.map((t) => ({ id: t.id, label: t.label, count: counts[t.id] }))}
+        // A stage with no orders shows no tab.
+        tabs={tabs.filter((t, i) => i < 2 || counts[t.id] || t.id === active).map((t) => ({ id: t.id, label: t.label, count: counts[t.id] }))}
         active={active}
         onChange={setActive}
       />
@@ -296,9 +292,8 @@ const WiredSOList = () => {
                   No orders in this view. {active !== "all" && <button type="button" onClick={() => setActive("all")} className="link-btn" style={{ color: "var(--ink)", cursor: "pointer", textDecoration: "underline" }}>show all</button>}
                 </td></tr>
               ) : filtered.slice(0, 100).map((o) => {
-                const st = stageOf(o.status);
+                const st = stageChip(o);
                 const lines = (o.result?.salesOrder?.lineItems || []).length;
-                const value = Number(o.result?.salesOrder?.grandTotal) || 0;
                 const mode = o.order_mode || (o.result?.salesOrder?.mode) || "—";
                 return (
                   <tr key={o.id} {...rowActivateProps(
@@ -311,7 +306,7 @@ const WiredSOList = () => {
                     <td><Chip k={mode === "INTERNAL" ? "plum" : mode.startsWith("PROJECT") ? "info" : "ghost"}>{mode}</Chip></td>
                     <td><Chip k={st.k}>{st.label}</Chip></td>
                     <td className="r mono">{lines || "—"}</td>
-                    <td className="r mono">{value ? fmtINRShort(value) : "—"}</td>
+                    <td className="r mono">{fmtOrderValue(o, { compact: true })}</td>
                     <td className="r mono">{ageLabel(o.updated_at || o.created_at)}</td>
                   </tr>
                 );

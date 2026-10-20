@@ -2,6 +2,7 @@ import React from "react";
 import { Banner, Btn, Card, Chip, WSTabs, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
+import { fmtCurrency } from "../lib/helpers";
 
 // ============================================================
 // ANVIL v3 — Pending Sales Orders (per-customer supply-chain tracker)
@@ -21,7 +22,6 @@ const ORIGIN_CHIP: Record<string, { k: string; label: string }> = {
 
 const fmtQty = (v: any) => (v == null ? "—" : String(v));
 const fmtDate = (v: any) => (v ? String(v).slice(0, 10) : "—");
-const fmtMoney = (v: any) => (v == null ? "—" : "₹" + Number(v).toLocaleString("en-IN"));
 
 // The furthest-along in-transit hop we have a date for (import lines only).
 const transitCell = (r: any) => {
@@ -87,7 +87,7 @@ const PendingSalesOrders: React.FC = () => {
       <WSTitle
         eyebrow="Sales · Pending Orders"
         title="Pending sales orders"
-        meta={state.customer ? `${state.customer.customer_name || state.customer.display_name} · ${state.rows.length} open line${state.rows.length === 1 ? "" : "s"} · ${fmtMoney(totalValue)}` : "Select a customer"}
+        meta={state.customer ? `${state.customer.customer_name || state.customer.display_name} · ${state.rows.length} open line${state.rows.length === 1 ? "" : "s"} · ${fmtCurrency(totalValue)}` : "Select a customer"}
         right={<>
           <select
             className="select"
@@ -155,7 +155,7 @@ const PendingSalesOrders: React.FC = () => {
                           {r.origin_conflict ? <Chip k="warn">?</Chip> : null}
                         </td>
                         <td className="r mono-sm">{fmtQty(r.ordered_qty)} / {fmtQty(r.supplied_qty)} / <b>{fmtQty(r.balance_qty)}</b></td>
-                        <td className="r mono-sm">{fmtMoney(r.value)}</td>
+                        <td className="r mono-sm">{fmtCurrency(r.value)}</td>
                         <td className="mono-sm">{fmtDate(r.promised_date)}{r.promised_source === "order" ? <div style={{ color: "var(--ink-3)" }}>order-level</div> : null}</td>
                         <td className="mono-sm">{r.source_po_no || "—"}{r.ready_date ? <div style={{ color: "var(--ink-3)" }}>ready {fmtDate(r.ready_date)}</div> : null}</td>
                         <td className="mono-sm">{transitCell(r)}</td>

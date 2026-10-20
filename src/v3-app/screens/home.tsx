@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ageLabel, draftLabel, fmtINRShort, sevOf, stageOf, useFetch } from "../lib/helpers";
+import { ageLabel, awaitsAction, draftLabel, fmtINRShort, fmtOrderValue, orderValue, sevOf, stageChip, stageKeyOf, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Sev, Stream, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
@@ -27,7 +27,6 @@ import { Prefs } from "../lib/preferences";
 // Statuses an order holds once it has been approved and not withdrawn.
 const APPROVED_OR_LATER = new Set(["APPROVED", "EXPORTED_TO_TALLY", "FAILED_TALLY_IMPORT", "RECONCILED"]);
 
-const grandTotalOf = (o: any): number => Number(o?.result?.salesOrder?.grandTotal) || 0;
 
 // The "done today" and "done this month" KPIs, by the tenant's processing mode.
 //
@@ -49,7 +48,7 @@ export const completionKpis = (list: any[], mode: "A" | "B" | null, now: Date = 
   const done = (Array.isArray(list) ? list : []).filter((o) => isDone(o) && at(o));
   const today = done.filter((o) => new Date(at(o)).toDateString() === now.toDateString());
   const mtd = done.filter((o) => new Date(at(o)).getTime() >= monthStart.getTime());
-  const sum = (rows: any[]) => rows.reduce((s, o) => s + grandTotalOf(o), 0);
+  const sum = (rows: any[]) => rows.reduce((s, o) => s + (orderValue(o) || 0), 0);
   return {
     verb: modeB ? "Approved" : "Pushed",
     today: { count: today.length, value: sum(today) },
@@ -79,12 +78,18 @@ const WiredHomeEngineer = () => {
   // queue and the activity stream were always empty.
   const list = Array.isArray(orders.data) ? orders.data : (orders.data?.orders || []);
 
-  const myQueue = list
-    .filter((o) => o.status !== "RECONCILED" && o.status !== "CANCELLED")
-    .slice(0, 8);
+  // The queue: every order with a next move, by its stage. Counted before the
+  // table takes its first 8. The list is newest first, so the oldest is found,
+  // not assumed.
+  // shortcut: counts the newest 50 orders the screen loads, for the whole
+  // tenant; upgrade when the worklist (C-14) serves "waiting on me".
+  const open = list.filter(awaitsAction);
+  const myQueue = open.slice(0, 8);
+  const at = (o: any) => o.updated_at || o.created_at;
+  const oldest = open.reduce((a, o) => (Date.parse(at(o)) < Date.parse(at(a)) ? o : a), open[0]);
 
   const drafts = list.filter((o) => o.status === "DRAFT").length;
-  const inApproval = list.filter((o) => o.status === "PENDING_REVIEW").length;
+  const inApproval = list.filter((o) => stageKeyOf(o) === "in_approval").length;
   // Audit P13.B.1.1: the 4th and 5th KPIs (today, and month to date). Same
   // backend payload, cut by the processing mode (completionKpis above).
   const done = completionKpis(list, soMode);
@@ -118,7 +123,7 @@ const WiredHomeEngineer = () => {
       <WSTitle
         eyebrow={new Date().toLocaleString("en-IN", { weekday: "long", hour: "2-digit", minute: "2-digit" })}
         title="Good morning."
-        meta={`${list.length} orders in scope · ${myQueue.length} awaiting action`}
+        meta={`${list.length} orders in scope · ${open.length} awaiting action`}
         right={<>
           <Btn icon kind="ghost" sm onClick={orders.reload} title="Refresh">{Icon.cycle}</Btn>
           <Btn kind="primary" sm onClick={() => window.location.hash = "#/so?new=1"}>{Icon.plus} New SO</Btn>
@@ -128,14 +133,14 @@ const WiredHomeEngineer = () => {
       <div className="ws-content">
         {myQueue.length > 0 && (
           <Banner kind="live" icon={Icon.bolt}
-                  title={`${myQueue.length} order${myQueue.length === 1 ? "" : "s"} in your queue · oldest ${ageLabel(myQueue[0]?.updated_at || myQueue[0]?.created_at)}`}
+                  title={`${open.length} order${open.length === 1 ? "" : "s"} in your queue · oldest ${ageLabel(at(oldest))}`}
                   action={<Btn sm kind="live" onClick={() => window.location.hash = "#/so"}>Open queue</Btn>}>
             <span className="mono-sm">First up: {draftLabel(myQueue[0])} · {myQueue[0]?.customer?.customer_name || ""}</span>
           </Banner>
         )}
 
         <KPIRow cols={5}>
-          <KPI lbl="My queue" v={String(myQueue.length)} d={myQueue.length ? `oldest ${ageLabel(myQueue[0]?.updated_at)}` : "all clear"} live={myQueue.length > 0} />
+          <KPI lbl="My queue" v={String(open.length)} d={open.length ? `oldest ${ageLabel(at(oldest))}` : "all clear"} live={open.length > 0} />
           <KPI lbl="Drafts" v={String(drafts)} d="autosaved locally" />
           <KPI lbl="In approval" v={String(inApproval)} d={inApproval ? "pending review" : "none pending"} />
           <KPI lbl={done.verb + " today"} v={fmtINRShort(done.today.value)} d={`${done.today.count} SOs`} dKind={done.today.count ? "up" : ""} />
@@ -146,7 +151,7 @@ const WiredHomeEngineer = () => {
           <Card flush>
             <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid var(--hairline-2)" }}>
               <span className="h2">My Queue</span>
-              <Chip k="live" lg>{myQueue.length} items</Chip>
+              <Chip k="live" lg>{open.length} items</Chip>
               <span style={{ marginLeft: "auto" }} className="mono-sm">live · {new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>
             </div>
             {myQueue.length === 0 ? (
@@ -166,15 +171,14 @@ const WiredHomeEngineer = () => {
                 </tr></thead>
                 <tbody>
                   {myQueue.map((o, i) => {
-                    const st = stageOf(o.status);
-                    const value = Number(o.result?.salesOrder?.grandTotal) || 0;
+                    const st = stageChip(o);
                     return (
                       <tr key={o.id || i}>
                         <td><Sev k={sevOf(o)} /></td>
                         <td className="mono"><span className="pri">{draftLabel(o)}</span></td>
                         <td>{o.customer?.customer_name || o.customer_id?.slice(0, 8) || "—"}</td>
                         <td><Chip k={st.k}>{st.label}</Chip></td>
-                        <td className="r mono">{value ? fmtINRShort(value) : "—"}</td>
+                        <td className="r mono">{fmtOrderValue(o, { compact: true })}</td>
                         <td className="r mono">{ageLabel(o.updated_at || o.created_at)}</td>
                         <td><Btn sm onClick={() => window.location.hash = `#/so?id=${o.id}`}>open {Icon.arrowR}</Btn></td>
                       </tr>

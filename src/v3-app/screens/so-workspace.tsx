@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { LoadingState } from "../components/LoadingState";
-import { ageLabel, stageOf, draftLabel, approvalPatch, NO_PAYLOAD_HASH_MESSAGE, isStaleApproval, STALE_APPROVAL_MESSAGE } from "../lib/helpers";
+import { ageLabel, stageChip, draftLabel, fmtCurrency, fmtOrderValue, orderValue, type OrderStage, approvalPatch, NO_PAYLOAD_HASH_MESSAGE, isStaleApproval, STALE_APPROVAL_MESSAGE } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KPI, KPIRow, KV, Modal, Prov, Steps, Stream, WSTabs, WSTitle, fmtINR, fmtUSD } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
@@ -30,6 +30,7 @@ import { lineExceptionIndexes } from "../../api/_lib/order-exceptions.js";
 // The forward step (plan PR 12): one button, from a pure workflow function.
 // The default config is today's flow; "solo" is off and has no screen.
 import { nextStep, DEFAULT_WORKFLOW_CONFIG, blockerSentence } from "../../api/_lib/order-next-step.js";
+import { orderStage } from "../../api/_lib/order-stage.js";
 import { SOWorkspaceMoreMenu } from "../components/SOWorkspaceMoreMenu";
 import { ReasonModal } from "../components/ReasonModal";
 import { orderDecisions, DECISION_LABEL } from "../lib/order-decisions";
@@ -727,7 +728,6 @@ const WiredSOWorkspace = () => {
   const reqNotice = requisitionNotice(reqGroups);
   const headerRequisition = String(o.result?.salesOrder?.customer?.requisition_no ?? "").trim();
   const grandTotal = Number(o.result?.salesOrder?.grandTotal) || 0;
-  const subtotal = draftLines.reduce((s, ln) => s + (Number(ln.lineTotal) || (Number(ln.qty || ln.quantity) * Number(ln.rate || ln.unitPrice)) || 0), 0);
   const findings = Array.isArray(o.rule_findings) ? o.rule_findings : [];
 
   const canPushTally = RBAC?.canDo?.("so.push_tally");
@@ -1384,8 +1384,6 @@ const WiredSOWorkspace = () => {
   const customerName = o.customer?.customer_name || o.customer_name
     || (o.customer_id ? o.customer_id.slice(0, 8) : (o.result?.salesOrder?.customer?.name || "—"));
   const customerEmail = o.customer?.contact_email || o.customer?.email;
-
-  const st = stageOf(o.status);
 
   // Reconciliation columns: number, item, UoM, qty, rate, HSN,
   // GST%, taxable, tax, line total, issues.
@@ -2054,6 +2052,11 @@ const WiredSOWorkspace = () => {
   const exceptionsLocal = buildOrderExceptions({ order: o, extractionRun, terms: termsView }) as unknown as ExceptionsResult;
   const exceptionsFromServer = !!exceptionsRemote && exceptionsRemote.order_id === o.id;
   const exceptions: ExceptionsResult = exceptionsFromServer ? exceptionsRemote : exceptionsLocal;
+  // The order's stage (plan R-M1): the server's, which rides with the
+  // exceptions, else the same pure function over the order this screen holds
+  // (no ERP SO link or extraction job is known here).
+  const stage: OrderStage = (exceptionsFromServer && exceptionsRemote.stage) || orderStage(o, { mode: soMode === "B" ? "B" : "A" });
+  const st = stageChip({ status: o.status, stage });
 
   // The "Review and decide" layout (plan PR 12) is the default view of an
   // order still under review. The line grid starts closed when no open
@@ -2074,9 +2077,23 @@ const WiredSOWorkspace = () => {
     exceptions,
     config: DEFAULT_WORKFLOW_CONFIG,
     permissions: { write: canWrite, approve: !!canApprove, push: !!canPushTally },
+    stage,
   });
+  // The revision rule (C-D2): an edit after the approval cleared it. The order
+  // goes back to DRAFT, then for approval again (the step's two transitions).
+  const resubmitForApproval = async () => {
+    try {
+      await AnvilBackend?.orders?.update?.(o.id, { status: "DRAFT" });
+    } catch (err: any) {
+      window.notifyError?.("Could not send for approval again", err?.message || String(err));
+      return;
+    }
+    await sendForReview();
+  };
+  const RUNNABLE_STEPS = ["submit_for_approval", "resubmit_for_approval", "approve", "confirm_and_generate"];
   const runNextStep = () => {
     if (step.action === "submit_for_approval") return sendForReview();
+    if (step.action === "resubmit_for_approval") return resubmitForApproval();
     if (step.action === "confirm_and_generate") return confirmAndGenerate();
     if (step.action === "approve") return approveOrder();
     return undefined;
@@ -2443,10 +2460,7 @@ const WiredSOWorkspace = () => {
           // to accept the order.
           const cur = currencyOf(o);
           const dv = deviationValue(recon, { currency: cur.currency });
-          const money = (v: number) => {
-            try { return new Intl.NumberFormat("en-IN", { style: "currency", currency: cur.currency || "INR", maximumFractionDigits: 0 }).format(v); }
-            catch { return `${cur.currency || ""} ${Math.round(v).toLocaleString("en-IN")}`.trim(); }
-          };
+          const money = (v: number) => fmtCurrency(v, cur.currency || "INR");
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-start" }}>
               <span className="mono-sm" style={{ fontWeight: 600, color: bad ? "var(--amber)" : "var(--sage)" }}>
@@ -2701,8 +2715,12 @@ const WiredSOWorkspace = () => {
           const hasValidation = !!(o.preflight_payload?.last_validated_at)
             || o.status === "PENDING_REVIEW"
             || (Array.isArray(o.rule_findings) && o.rule_findings.length > 0);
-          const isApproved = o.status === "APPROVED" || o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED";
-          const isPushed = o.status === "EXPORTED_TO_TALLY" || o.status === "RECONCILED";
+          // Approve and the last step read the stage: an approval a later
+          // edit cleared is not approved, and a Mode B order is done once
+          // it is keyed in Tally.
+          const isKeyed = ["keyed_unverified", "keyed", "verified"].includes(stage.stage);
+          const isApproved = isKeyed || stage.stage === "approved" || stage.stage === "handed_off";
+          const isPushed = isKeyed;
           // The order row in the workspace implies Capture is already
           // done (intake created it). So we start at 1 and walk
           // forward as each subsequent stage's evidence shows up.
@@ -2800,7 +2818,7 @@ const WiredSOWorkspace = () => {
               </div>
               <div className="so-summary-item">
                 <span className="lbl">Value</span>
-                <span className="v mono">{(grandTotal || subtotal) ? fmtINR(Math.round((grandTotal || subtotal) * 100) / 100) : "not priced"}</span>
+                <span className="v mono">{orderValue(o, draftLines) == null ? "not priced" : fmtOrderValue(o, { lines: draftLines })}</span>
               </div>
               <div className="so-summary-item">
                 <span className="lbl">Lines</span>
@@ -3496,45 +3514,43 @@ const WiredSOWorkspace = () => {
             setState={setPipelineState}
           />
         )}
-        {/* The NEXT STEP (plan PR 12), pinned to the foot of the screen while
-            the order is under review, on every tab. The workflow function
-            picks the action and its label, and names what blocks it from the
-            exceptions list. The default config is today's flow. */}
-        {reviewMode && (
-          <div className="so-next-step-bar" data-testid="so-next-step-bar" data-action={step.action}>
-            <div className="so-next-step-why mono-sm">
-              {step.blockers.length > 0 ? (
-                <span data-testid="next-step-blockers" style={{ color: "var(--rust)" }}>{blockerSentence(step)}</span>
-              ) : exceptions.rows.length > 0 ? (
-                <span style={{ color: "var(--ink-3)" }}>{exceptions.rows.length} item{exceptions.rows.length === 1 ? "" : "s"} listed under Needs decision; none blocks this step.</span>
-              ) : (
-                <span style={{ color: "var(--ink-3)" }}>Nothing needs a decision.</span>
-              )}
-              {step.notes.length > 0 && (
-                <span data-testid="next-step-notes" style={{ color: "var(--ink-3)", display: "block" }}>
-                  An approver must clear before approval: {step.notes.map((n: any) => n.title).join("; ")}
-                </span>
-              )}
-            </div>
-            {step.action === "submit_for_approval" && (
-              <input
-                className="input mono-sm"
-                aria-label="Note to the approver (optional)"
-                placeholder="Note to the approver (optional)"
-                value={submitNote}
-                onChange={(ev) => setSubmitNote(ev.target.value)}
-                disabled={!step.enabled || !!busy}
-                style={{ minWidth: 220, flex: "0 1 320px" }}
-              />
+        {/* The NEXT STEP (plan PR 12), pinned to the foot of the screen on
+            every tab, at every stage (R-M1). The workflow function picks the
+            action and its label from the stage, and names what blocks it
+            from the exceptions list. The default config is today's flow. */}
+        <div className="so-next-step-bar" data-testid="so-next-step-bar" data-action={step.action}>
+          <div className="so-next-step-why mono-sm">
+            {step.blockers.length > 0 ? (
+              <span data-testid="next-step-blockers" style={{ color: "var(--rust)" }}>{blockerSentence(step)}</span>
+            ) : exceptions.rows.length > 0 ? (
+              <span style={{ color: "var(--ink-3)" }}>{exceptions.rows.length} item{exceptions.rows.length === 1 ? "" : "s"} listed under Needs decision; none blocks this step.</span>
+            ) : (
+              <span style={{ color: "var(--ink-3)" }}>Nothing needs a decision.</span>
             )}
-            <Btn kind="primary"
-                 disabled={!step.enabled || !!busy || (step.action !== "submit_for_approval" && step.action !== "approve" && step.action !== "confirm_and_generate")}
-                 onClick={runNextStep}
-                 title={step.blockers.length ? blockerSentence(step) : step.label}>
-              {step.action === "submit_for_approval" ? Icon.send : Icon.shieldCheck} {step.action === "submit_for_approval" ? busyVerb(busy, "review", step.label) : step.label}
-            </Btn>
+            {step.notes.length > 0 && (
+              <span data-testid="next-step-notes" style={{ color: "var(--ink-3)", display: "block" }}>
+                An approver must clear before approval: {step.notes.map((n: any) => n.title).join("; ")}
+              </span>
+            )}
           </div>
-        )}
+          {step.action === "submit_for_approval" && (
+            <input
+              className="input mono-sm"
+              aria-label="Note to the approver (optional)"
+              placeholder="Note to the approver (optional)"
+              value={submitNote}
+              onChange={(ev) => setSubmitNote(ev.target.value)}
+              disabled={!step.enabled || !!busy}
+              style={{ minWidth: 220, flex: "0 1 320px" }}
+            />
+          )}
+          <Btn kind="primary"
+               disabled={!step.enabled || !!busy || !RUNNABLE_STEPS.includes(step.action)}
+               onClick={runNextStep}
+               title={step.blockers.length ? blockerSentence(step) : step.label}>
+            {step.action === "submit_for_approval" ? Icon.send : Icon.shieldCheck} {step.action === "submit_for_approval" ? busyVerb(busy, "review", step.label) : step.label}
+          </Btn>
+        </div>
       </div>
       {/* Layer A: item_master picker. Renders only when the operator
           clicks "Map to canonical..." on an unmapped recon line. */}

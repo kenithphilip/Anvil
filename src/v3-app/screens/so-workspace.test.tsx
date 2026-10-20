@@ -221,15 +221,15 @@ describe("SoWorkspace", () => {
       const { container } = renderScreen(Screen);
       // Poll until the order-load effect resolves and the action bar
       // renders; a fixed tick count is racy in CI.
-      // The order has moved on: the review view's next-step bar is not
-      // there, so no enabled "Send for approval" button exists.
+      // The order has moved on: the next-step bar names the end of the
+      // ladder, and no enabled "Send for approval" button exists.
       await waitFor(() => {
         expect(container.querySelectorAll(".step").length).toBe(6);
       });
       const enabledSend = Array.from(container.querySelectorAll("button"))
         .find((b) => (b.textContent || "").includes("Send for approval") && !b.hasAttribute("disabled"));
       expect(enabledSend).toBeUndefined();
-      expect(container.querySelector("[data-testid='so-next-step-bar']")).toBeNull();
+      expect(container.querySelector("[data-testid='so-next-step-bar']")!.getAttribute("data-action")).toBe("none");
     } finally {
       window.location.hash = original;
     }

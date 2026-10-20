@@ -163,8 +163,8 @@ describe("PipelineKanban", () => {
     seed([order("BLOCKED"), order("CANCELLED")]);
     await renderBoard();
     await screen.findByText("PO-BLOCKED");
-    expect(within(column("Validate")).getByText("blocked")).toBeTruthy();
-    expect(within(column("Closed")).getByText("cancelled")).toBeTruthy();
+    expect(within(column("Validate")).getByText("Verifying, blocked")).toBeTruthy();
+    expect(within(column("Closed")).getByText("Cancelled")).toBeTruthy();
   });
 
   it("does not accept a drop on Closed, and changes nothing", async () => {
@@ -307,5 +307,37 @@ describe("PipelineKanban", () => {
     expect(accepted).toBe(true);
     expect(serverUpdate).toHaveBeenCalledWith("o-draft", { status: "PENDING_REVIEW" });
     await waitFor(() => expect(db.orders[0].status).toBe("PENDING_REVIEW"));
+  });
+});
+
+// The board reads each order's stage (plan R-M1, C-10). A Mode B order stays
+// APPROVED after the clerk keys it, so it sat in Approve for ever.
+describe("PipelineKanban reads the stage", () => {
+  const stage = (s: string, next = "none") => ({ stage: { stage: s, next_action: next } });
+
+  it("puts a Mode B order by its stage: handed off in Push, keyed or verified in Closed", async () => {
+    seed([
+      order("APPROVED", { id: "o-wait", po_number: "PO-WAIT", ...stage("approved", "send_handoff") }),
+      order("APPROVED", { id: "o-sent", po_number: "PO-SENT", ...stage("handed_off", "enter_in_tally") }),
+      order("APPROVED", { id: "o-keyed", po_number: "PO-KEYED", ...stage("keyed", "verify_in_erp") }),
+      order("APPROVED", { id: "o-done", po_number: "PO-DONE", ...stage("verified") }),
+    ]);
+    await renderBoard();
+    await screen.findByText("PO-WAIT");
+    expect(within(column("Approve")).getByText("PO-WAIT")).toBeTruthy();
+    expect(within(column("Push")).getByText("PO-SENT")).toBeTruthy();
+    expect(within(column("Closed")).getByText("PO-KEYED")).toBeTruthy();
+    expect(within(column("Closed")).getByText("Verified in ERP")).toBeTruthy();
+  });
+
+  it("moves a dropped card at once, though its stage came from the server", async () => {
+    seed([order("DRAFT", { result: { salesOrder: { lineItems: [] } }, ...stage("verifying", "submit_for_approval") })]);
+    await renderBoard();
+    await screen.findByText("PO-DRAFT");
+
+    await dragTo("PO-DRAFT", "Validate");
+
+    await waitFor(() => expect(within(column("Validate")).getByText("PO-DRAFT")).toBeTruthy());
+    expect(within(column("Inbox")).queryByText("PO-DRAFT")).toBeNull();
   });
 });

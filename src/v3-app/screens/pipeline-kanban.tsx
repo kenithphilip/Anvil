@@ -21,15 +21,15 @@
 // only way to cancel is the confirmed cancel button in the SO
 // workspace.
 //
-// Data comes from the existing `orders` API. Each order_status value
-// (migration 001) maps to exactly one column through COLUMN_OF_STATUS.
+// Data comes from the existing `orders` API. Each order shows in exactly
+// one column, by its stage (COLUMN_OF_STAGE) or its parked status.
 // Counts at the column heads are real (length of the bucket).
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Banner, Card, Chip, KPI, KPIRow, WSTitle } from "../lib/primitives";
 import { AnvilBackend } from "../lib/api";
 import { RBAC } from "../lib/rbac";
-import { stageOf, ageLabel, approvalPatch, isStaleApproval, NO_PAYLOAD_HASH_MESSAGE, STALE_APPROVAL_MESSAGE } from "../lib/helpers";
+import { stageChip, stageKeyOf, fmtOrderValue, type OrderStage, ageLabel, approvalPatch, isStaleApproval, NO_PAYLOAD_HASH_MESSAGE, STALE_APPROVAL_MESSAGE } from "../lib/helpers";
 
 // A row of GET /api/orders. The customer comes under the `customer`
 // embed and the totals inside result.salesOrder, the places the SO list
@@ -46,6 +46,7 @@ interface Order {
   payload_hash?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  stage?: OrderStage | null;
 }
 
 const lineCountOf = (o: Order): number => {
@@ -67,37 +68,37 @@ const COLUMNS: Array<{ id: string; label: string; target: string | null }> = [
   { id: "closed",   label: "Closed",   target: null },
 ];
 
-// Every order_status value, and the one column it shows in. BLOCKED,
-// DUPLICATE and REUSED wait for an operator decision, so they sit in
-// Validate with the orders under review (the server lets each of them
-// go back to DRAFT, so none is terminal). FAILED_TALLY_IMPORT waits
-// for a retry in Push. Closed holds the statuses that have left the
-// pipeline.
-const COLUMN_OF_STATUS: Record<string, string> = {
-  DRAFT: "inbox",
-  PENDING_REVIEW: "validate",
+// The column of each order stage (order.stage, helpers.ts). An order the
+// PO is still being read for is in OCR. A Mode B order handed to order
+// processing waits in Push for the clerk. Closed holds the orders that have
+// left the pipeline: keyed in the ERP, verified or cancelled.
+const COLUMN_OF_STAGE: Record<string, string> = {
+  received: "ocr",
+  verifying: "inbox",
+  returned: "inbox",
+  in_approval: "validate",
+  approved: "approve",
+  handed_off: "push",
+  keyed_unverified: "closed",
+  keyed: "closed",
+  verified: "closed",
+  cancelled: "closed",
+};
+// BLOCKED, DUPLICATE and REUSED wait for an operator decision, so they sit in
+// Validate with the orders under review (the server lets each of them go back
+// to DRAFT, so none is terminal). FAILED_TALLY_IMPORT waits for a retry in
+// Push.
+const COLUMN_OF_PARKED: Record<string, string> = {
   BLOCKED: "validate",
   DUPLICATE: "validate",
   REUSED: "validate",
-  APPROVED: "approve",
   FAILED_TALLY_IMPORT: "push",
-  EXPORTED_TO_TALLY: "closed",
-  RECONCILED: "closed",
-  CANCELLED: "closed",
 };
 
-// A row with no status, or a status this screen does not know yet,
-// shows in Inbox so it is never hidden.
+// A row with no stage and a status this screen does not know yet shows in
+// Inbox, so it is never hidden.
 const bucketOf = (order: Order): string =>
-  COLUMN_OF_STATUS[String(order.status || "").toUpperCase()] || "inbox";
-
-const fmtMoney = (v: number | string | null | undefined): string => {
-  if (v == null || v === "") return "—";
-  const n = typeof v === "number" ? v : Number(v);
-  if (!Number.isFinite(n)) return String(v);
-  if (n >= 100000) return "₹" + (n / 100000).toFixed(1) + "L";
-  return "₹" + n.toLocaleString("en-IN");
-};
+  COLUMN_OF_PARKED[String(order.status || "").toUpperCase()] || COLUMN_OF_STAGE[stageKeyOf(order) as string] || "inbox";
 
 const PipelineKanban: React.FC = () => {
   const [orders, setOrders] = useState<Order[] | null>(null);
@@ -183,7 +184,9 @@ const PipelineKanban: React.FC = () => {
     // Optimistic local update so the card jumps columns instantly.
     setOrders((prev) => {
       if (!prev) return prev;
-      return prev.map((o) => o.id === id ? { ...o, status: target } : o);
+      // The stage the server sent is the old one; until the next load the
+      // card is placed by its new status.
+      return prev.map((o) => o.id === id ? { ...o, status: target, stage: null } : o);
     });
     try {
       // The orders API hangs status updates off the singleton row
@@ -287,16 +290,16 @@ const PipelineKanban: React.FC = () => {
                       {lineCountOf(o) > 0 && (
                         <Chip k="info">{lineCountOf(o)} lines</Chip>
                       )}
-                      {/* Name the status when the column holds more than
+                      {/* Name the stage when the column holds more than
                           one (a blocked order in Validate, a cancelled
                           one in Closed). */}
                       {o.status && o.status !== col.target && (
-                        <Chip k={stageOf(o.status).k}>{stageOf(o.status).label}</Chip>
+                        <Chip k={stageChip(o).k}>{stageChip(o).label}</Chip>
                       )}
                     </div>
                     <div className="kanban-card-c">{o.customer?.customer_name || "—"}</div>
                     <div className="kanban-card-foot">
-                      <span>{fmtMoney(o.result?.salesOrder?.grandTotal)}</span>
+                      <span>{fmtOrderValue(o, { compact: true })}</span>
                       <span className="kanban-card-age">{ageLabel(o.updated_at || o.created_at)}</span>
                     </div>
                   </a>

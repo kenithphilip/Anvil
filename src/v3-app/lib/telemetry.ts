@@ -10,6 +10,7 @@
 import { useEffect, useState } from "react";
 import { AnvilBackend } from "./api";
 import { lsGet } from "./storage-keys";
+import { awaitsAction, stageKeyOf } from "./helpers";
 
 export interface ShellBadge { v: string; k?: string; }
 export type BadgeMap = Record<string, ShellBadge>;
@@ -80,13 +81,14 @@ const arrayOf = (v: any): any[] => {
   return [];
 };
 
-const computeBadges = (orders: any[], audit: any[]): BadgeMap => {
-  const intake = orders.filter((o) => ["DRAFT", "PENDING_REVIEW", "DUPLICATE"].includes(o.status));
-  const active = orders.filter((o) => o.status && !["SHIPPED", "CLOSED", "CANCELLED"].includes(o.status));
-  // Approvals badge: only orders that actually need a decision. The
-  // earlier regex /APPROVAL|APPROVE/ matched "APPROVED" too, which
-  // led to the sidebar saying 12 while the queue showed 0 pending.
-  const approvals = orders.filter((o) => ["PENDING_REVIEW", "PENDING_APPROVAL"].includes(o.status));
+// The nav badges, from each order's stage (helpers.ts). Intake: orders still
+// being read or verified. SO: every order with a next move (not verified, not
+// cancelled, not parked). Approvals: orders in approval.
+const INTAKE_STAGES = new Set(["received", "verifying", "returned"]);
+export const computeBadges = (orders: any[], audit: any[]): BadgeMap => {
+  const active = orders.filter(awaitsAction);
+  const intake = active.filter((o) => INTAKE_STAGES.has(stageKeyOf(o)));
+  const approvals = orders.filter((o) => stageKeyOf(o) === "in_approval");
 
   const badge = (n: number, kind?: string): ShellBadge | undefined => {
     if (n <= 0) return undefined;

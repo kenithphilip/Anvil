@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ageLabel, draftLabel, fmtDate, stageOf, useFetch } from "../lib/helpers";
+import { ageLabel, draftLabel, fmtDate, stageChip, useFetch } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, KV, WSTitle } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
@@ -483,7 +483,7 @@ const GunsRightPane = ({ gun, ordersData, ordersLoading, ordersError, customerLo
             </tr></thead>
             <tbody>
               {recentSOs.map((m) => {
-                const st = stageOf(m.order.status);
+                const st = stageChip(m.order);
                 return (
                   <tr key={m.order.id}>
                     <td className="mono"><span className="pri">{draftLabel(m.order)}</span></td>

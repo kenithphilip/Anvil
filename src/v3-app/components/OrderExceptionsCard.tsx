@@ -1,6 +1,7 @@
 import React from "react";
 import { Btn, Card, Chip } from "../lib/primitives";
 import { useReviewPaneSelection } from "./ReviewPaneContext";
+import type { OrderStage } from "../lib/helpers";
 
 // ============================================================
 // ANVIL v3: the "Needs decision" card of the SO workspace
@@ -55,6 +56,8 @@ export type ExceptionsResult = {
   clean: boolean;
   terms_state?: string;
   customer_match?: { basis: string; label: string } | null;
+  // GET /api/orders/exceptions sends the order's stage beside the list.
+  stage?: OrderStage | null;
 };
 
 const SEVERITY_CHIP: Record<string, string> = { critical: "bad", high: "bad", warn: "warn", info: "info" };

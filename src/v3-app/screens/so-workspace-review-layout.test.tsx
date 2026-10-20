@@ -109,7 +109,7 @@ describe("a clean order", () => {
     const text = strip.textContent || "";
     expect(text).toContain("CustomerReview Buyer");
     expect(text).toContain("POPO-REV-1dated 01-Oct-26");
-    expect(text).toContain("Value₹ 1,500");
+    expect(text).toContain("Value₹1,500.00");
     expect(text).toContain("Lines2");
     expect(text).toContain("Delivery30-Nov-26 · from the PO header");
   });

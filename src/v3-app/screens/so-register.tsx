@@ -1,5 +1,5 @@
 import React from "react";
-import { fmtCurrency, fmtDate, stageOf } from "../lib/helpers";
+import { fmtCurrency, fmtDate, stageChip } from "../lib/helpers";
 import { Banner, Btn, Card, Chip, WSTitle, rowActivateProps } from "../lib/primitives";
 import { Icon } from "../lib/icons";
 import { AnvilBackend } from "../lib/api";
@@ -206,7 +206,7 @@ const SoRegister: React.FC = () => {
           status:&nbsp;
           <select aria-label="Filter by status" value={filters.status} onChange={(e) => setFilter({ status: e.target.value })} style={selectStyle}>
             <option value="">any</option>
-            {STATUSES.map((s) => <option key={s} value={s}>{stageOf(s).label} ({s})</option>)}
+            {STATUSES.map((s) => <option key={s} value={s}>{stageChip({ status: s }).label} ({s})</option>)}
           </select>
         </Chip>
         <Chip k={filters.hasFlags ? "fill" : undefined}>
@@ -270,7 +270,7 @@ const SoRegister: React.FC = () => {
                     {anyFilter ? "No orders match these filters." : "No orders received yet."}
                   </td></tr>
                 ) : state.rows.map((r) => {
-                  const st = stageOf(r.status);
+                  const st = stageChip(r);
                   const ex = EXTRACTION_CHIP[r.extraction?.status] || { k: "ghost", label: r.extraction?.status || "unknown" };
                   const rec = r.reconciliation || {};
                   return (

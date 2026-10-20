@@ -3,7 +3,7 @@
 // each screen conversion in Sub-PR 3.
 
 import { describe, it, expect } from "vitest";
-import { ageLabel, fmtINRShort, stageOf, sevOf, draftLabel } from "./helpers";
+import { ageLabel, fmtINRShort, sevOf, draftLabel } from "./helpers";
 
 describe("ageLabel", () => {
   it("returns em-dash for nullish input", () => {
@@ -42,19 +42,6 @@ describe("fmtINRShort", () => {
 
   it("formats small values with locale grouping", () => {
     expect(fmtINRShort(999)).toBe("₹ 999");
-  });
-});
-
-describe("stageOf", () => {
-  it("maps known status enums", () => {
-    expect(stageOf("BLOCKED")).toEqual({ label: "blocked", k: "bad" });
-    expect(stageOf("RECONCILED")).toEqual({ label: "shipped", k: "good" });
-  });
-
-  it("falls back to a ghost chip for unknown status", () => {
-    const out = stageOf("WEIRD_STATE");
-    expect(out.k).toBe("ghost");
-    expect(out.label).toBe("weird_state");
   });
 });
 

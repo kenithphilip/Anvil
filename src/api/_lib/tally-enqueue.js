@@ -10,7 +10,9 @@ import { buildSalesVoucherXml } from "./tally-build-voucher.js";
 
 // Returns { ok:true, queued, order_id, voucher_no, voucher_type, queue_id,
 // company } or { ok:false, code, message }. Never posts to Tally.
-export const enqueueTallyVoucher = async (svc, ctx, { orderId, voucherType, companyId } = {}) => {
+// The reconciler passes voucherRecordId and voucherNo to re-push a voucher
+// it pushed before, so the retry drain updates that voucher record.
+export const enqueueTallyVoucher = async (svc, ctx, { orderId, voucherType, companyId, voucherRecordId, voucherNo: pushedVoucherNo } = {}) => {
   const oid = String(orderId || "").trim();
   if (!oid) return { ok: false, code: "ORDER_REQUIRED", message: "orderId required" };
 
@@ -24,11 +26,13 @@ export const enqueueTallyVoucher = async (svc, ctx, { orderId, voucherType, comp
   if (orderQ.error) return { ok: false, code: "ORDER_READ_FAILED", message: orderQ.error.message };
   const order = orderQ.data;
   if (!order) return { ok: false, code: "ORDER_NOT_FOUND", message: "Order not found" };
+  // A cancelled order must not go to Tally. The retry drain also skips one (#631).
+  if (order.status === "CANCELLED") return { ok: false, code: "ORDER_CANCELLED", message: "Order is cancelled" };
   if (!order.approval || !order.approval.payloadHash) {
     return { ok: false, code: "NOT_APPROVED", message: "Order has no approval bound to a payload hash — approve it before pushing." };
   }
   const payloadHash = order.payload_hash || order.approval.payloadHash;
-  const voucherNo = "SO:" + order.po_number;
+  const voucherNo = pushedVoucherNo || "SO:" + order.po_number;
 
   const customerQ = order.customer_id
     ? await svc.from("customers").select("*").eq("tenant_id", ctx.tenantId).eq("id", order.customer_id).maybeSingle()
@@ -40,7 +44,7 @@ export const enqueueTallyVoucher = async (svc, ctx, { orderId, voucherType, comp
     tenant_id: ctx.tenantId,
     company_id: company.id || null,
     order_id: order.id,
-    voucher_record_id: null,
+    voucher_record_id: voucherRecordId || null,
     voucher_type: vType,
     payload_xml: built.xml,
     payload_hash: payloadHash,

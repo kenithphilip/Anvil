@@ -21,6 +21,7 @@ import { documentsBucket, ensureDocumentsBucket, friendlyStorageError } from "..
 import { tallyResolveCompany } from "../_lib/tally-client.js";
 import { resolveSalesVoucherType } from "../_lib/tally-voucher-type.js";
 import { computeLineTax, placeOfSupplyKind, sellerStateCode, buyerStateCode } from "../_lib/tally-build-voucher.js";
+import { soLineQty, soLineRate } from "../_lib/so-line-money.js";
 
 const SHARE_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
@@ -39,20 +40,17 @@ const buildVoucherData = ({ tenant, order, customer, company, voucherType }) => 
 
   let taxable = 0, cgst = 0, sgst = 0, igst = 0, cess = 0;
   const items = soItems.map((ln) => {
-    const t = computeLineTax({
-      qty: pick(ln.qty, ln.quantity),
-      rate: pick(ln.discounted_unit_price, ln.unit_price, ln.rate, ln.unitPrice),
-      gst_pct: pick(ln.gst_pct, ln.gstRate, ln.rate_of_duty_pct),
-      cess_pct: ln.cess_pct,
-    }, kind);
+    // The whole line, so the tax reads what the Tally voucher reads (the
+    // item master's GST rate on _mapped_item included).
+    const t = computeLineTax(ln, kind);
     taxable += t.taxable; cgst += t.cgst; sgst += t.sgst; igst += t.igst; cess += t.cess;
     return {
       partNumber: pick(ln.part_no, ln.partNumber, ln.itemCode) || null,
       description: pick(ln.description, ln.itemName) || null,
       hsn: pick(ln.hsn, ln.hsn_sac) || null,
-      quantity: pick(ln.qty, ln.quantity),
+      quantity: soLineQty(ln),
       uom: pick(ln.uom, ln.unit) || null,
-      rate: pick(ln.discounted_unit_price, ln.unit_price, ln.rate, ln.unitPrice),
+      rate: soLineRate(ln),
       gstPct: t.gst_pct,
       taxable: t.taxable,
     };

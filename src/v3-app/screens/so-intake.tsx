@@ -651,6 +651,16 @@ const WiredSOIntake = () => {
     return candidate || null;
   };
 
+  // Everything an extraction stashes, cleared before the next one and on
+  // remove, so an order never takes the lines or customer of an earlier PO.
+  const resetExtraction = () => {
+    setExtractedLines(null);
+    setExtractedEvidence(null);
+    setExtractMeta({});
+    setLargePo(null);
+    setExtractedCustomer(null);
+  };
+
   // Run docai extraction on the just-uploaded file. Best-effort: a
   // failure here doesn't block the user; they can still pick the
   // customer manually.
@@ -668,6 +678,7 @@ const WiredSOIntake = () => {
   //      succeeded server-side.
   const runExtraction = async (file, documentId) => {
     setBusy("extract");
+    resetExtraction();
     try {
       const out = await AnvilBackend?.documents?.extract?.(file, { source_id: documentId });
       // Persist anything the extractor returned, even if customer
@@ -677,8 +688,6 @@ const WiredSOIntake = () => {
       if (lines && lines.length) setExtractedLines(lines);
       if (out?.evidence_by_field && Object.keys(out.evidence_by_field).length) {
         setExtractedEvidence(out.evidence_by_field);
-      } else {
-        setExtractedEvidence(null);
       }
       setExtractMeta({
         runId: out?.run_id || null,
@@ -698,8 +707,6 @@ const WiredSOIntake = () => {
           "Large PO · customer detected from page 1",
           `This PO is ${out.total_pages || "many"} pages. We've read the header now; all line items extract in the background once you create the order.`,
         );
-      } else {
-        setLargePo(null);
       }
       // Phase 3.6 observability: if the extract API returned a
       // structured status_reason that means "extraction did not
@@ -1286,7 +1293,7 @@ const WiredSOIntake = () => {
                         ) : null}
                       </div>
                     )}
-                    <Btn sm kind="ghost" style={{ marginTop: 12 }} onClick={() => setDoc(null)}>{Icon.x} remove</Btn>
+                    <Btn sm kind="ghost" style={{ marginTop: 12 }} onClick={() => { setDoc(null); resetExtraction(); }}>{Icon.x} remove</Btn>
                   </>
                 ) : (
                   <>

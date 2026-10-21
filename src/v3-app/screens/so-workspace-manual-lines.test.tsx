@@ -170,17 +170,19 @@ describe("removing a line", () => {
 });
 
 describe("read-only orders", () => {
-  it("offers neither control once the order is no longer editable", async () => {
-    // canEditLines is false outside DRAFT/PENDING_REVIEW; an approved order
-    // must be reopened rather than edited in place.
-    const { container } = await openWorkspace(order() as any);
-    // Sanity: the control exists on a DRAFT.
+  // Lines are edited only before approval. An approved order (or one that
+  // failed in Tally, or a duplicate) is returned for correction first.
+  it.each(["DRAFT", "PENDING_REVIEW", "BLOCKED"])("offers both controls on a %s order", async (status) => {
+    const { container } = await openWorkspace({ ...order(), status } as any);
     expect(btn(container, "+ Add line")).toBeTruthy();
+    expect(container.querySelector('button[aria-label="Remove line 1"]')).toBeTruthy();
+  });
 
-    const approved = { ...order(), status: "EXPORTED_TO_TALLY" };
-    const { container: c2 } = await openWorkspace(approved as any);
-    expect(btn(c2, "+ Add line")).toBeFalsy();
-    expect(c2.querySelector('button[aria-label="Remove line 1"]')).toBeFalsy();
+  it.each(["APPROVED", "FAILED_TALLY_IMPORT", "DUPLICATE", "EXPORTED_TO_TALLY"])("offers neither on a %s order, and says why", async (status) => {
+    const { container } = await openWorkspace({ ...order(), status } as any);
+    expect(container.textContent).toContain("Lines are read-only because the order is " + status);
+    expect(btn(container, "+ Add line")).toBeFalsy();
+    expect(container.querySelector('button[aria-label="Remove line 1"]')).toBeFalsy();
   });
 });
 

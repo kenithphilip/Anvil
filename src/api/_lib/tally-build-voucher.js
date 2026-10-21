@@ -29,6 +29,7 @@
 
 import { gstinStateCode } from "./gstin.js";
 import { resolveSalesVoucherType, toTallyXmlName } from "./tally-voucher-type.js";
+import { soLineQty, soLineRate } from "./so-line-money.js";
 
 const escape = (s) => String(s == null ? "" : s).replace(/[&<>\"']/g, (c) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
@@ -95,8 +96,10 @@ export const splitRateTotal = (src) => {
 };
 
 export const computeLineTax = (line, kind) => {
-  const qty = num(line.qty || line.quantity, 0);
-  const rate = num(line.rate || line.unitPrice, 0);
+  // The rate every export prints (so-line-money.js): the PO rate, else the
+  // rate the reconciler filled for a PO that printed none.
+  const qty = soLineQty(line);
+  const rate = soLineRate(line);
   const taxable = round2(qty * rate);
   // `_mapped_item.rate_of_duty_pct` is the canonical rate from item_master.
   // The resolver backfills only hsn/uom onto the line, so without this the
@@ -220,8 +223,8 @@ const inventoryEntryXml = (line, kind, company) => {
   const tax = computeLineTax(line, kind);
   const name = escape(stockItemName(line));
   const uom = escape(lineUom(line));
-  const rate = num(line.rate || line.unitPrice, 0);
-  const qty = num(line.qty || line.quantity, 0);
+  const rate = soLineRate(line);
+  const qty = soLineQty(line);
   const sales = escape(salesLedgerName(company, kind, tax.gst_pct));
   return [
     "<ALLINVENTORYENTRIES.LIST>",

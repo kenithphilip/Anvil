@@ -63,7 +63,40 @@ const markGaveUp = async (svc, row, status, err) => {
   return { id: row.id, gave_up: true, status, error: err };
 };
 
+// The row's XML was built when it was queued. It is pushed only while the
+// order is still that approved order. Otherwise the row leaves the queue with
+// the reason, and payload_xml stays on it for the audit.
+const skipReason = (order, row) => {
+  if (!order) return "order not found";
+  if (order.status === "CANCELLED") return "order cancelled";
+  if (!order.approval || !order.approval.payloadHash) return "order not approved";
+  const current = order.payload_hash || order.approval.payloadHash;
+  if (String(row.payload_hash || "") !== String(current)) return "order changed since it was queued";
+  return null;
+};
+
+// shortcut: a skip is stored as gave_up with a "skipped::" last_error (the
+// status check allows no other value), so tally/health counts it as a give-up;
+// add a 'skipped' status in a migration when health must tell them apart.
+const markSkipped = async (svc, row, reason) => {
+  await svc.from("tally_retry_queue").update({
+    status: "gave_up",
+    last_attempt_at: new Date().toISOString(),
+    last_error: "skipped::" + reason,
+  }).eq("id", row.id);
+  return { id: row.id, skipped: true, reason };
+};
+
 const replay = async (svc, row, ctx) => {
+  const orderQ = row.order_id
+    ? await svc.from("orders").select("status, approval, payload_hash")
+      .eq("tenant_id", row.tenant_id).eq("id", row.order_id).maybeSingle()
+    : { data: null };
+  // A failed read is a retry, not a skip: the order may be fine.
+  if (orderQ.error) return await markFailure(svc, row, 0, "order read: " + orderQ.error.message);
+  const reason = skipReason(orderQ.data, row);
+  if (reason) return await markSkipped(svc, row, reason);
+
   const company = await tallyResolveCompany(svc, row.tenant_id, row.company_id);
   if (!company || !company.bridge_url) {
     return await markFailure(svc, row, 0, "bridge URL missing");
@@ -97,7 +130,7 @@ const replay = async (svc, row, ctx) => {
       await svc.from("orders").update({
         tally_status: "exported",
         status: "EXPORTED_TO_TALLY",
-      }).eq("id", row.order_id);
+      }).eq("tenant_id", row.tenant_id).eq("id", row.order_id);
     }
     if (ctx) {
       await recordAudit(ctx, {

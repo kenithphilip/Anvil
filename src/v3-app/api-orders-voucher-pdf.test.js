@@ -113,6 +113,27 @@ describe("GET /api/orders/voucher_pdf", () => {
     expect(d.totalInWords).toMatch(/Two Hundred Thirty Six INR Only/);
   });
 
+  it("takes the GST rate from the item master when the line has none", async () => {
+    h.order.result.salesOrder.lineItems = [
+      { part_no: "BR-6204", hsn: "8482", qty: 2, rate: 100, uom: "Nos", _mapped_item: { id: "im-1", rate_of_duty_pct: 18 } },
+    ];
+    const { res } = await run({ orderId: "ord-1" });
+    expect(res.statusCode).toBe(200);
+    const d = h.renderArgs[0];
+    expect(d.items[0]).toMatchObject({ quantity: 2, rate: 100, gstPct: 18, taxable: 200 });
+    expect(d.total).toBe(236);
+  });
+
+  it("prints the PO rate, as the Tally voucher does, when the reconciler filled another", async () => {
+    h.order.result.salesOrder.lineItems = [
+      { part_no: "BR-6204", hsn: "8482", qty: 2, unitPrice: 100, discounted_unit_price: 90, gst_pct: 18, uom: "Nos" },
+    ];
+    await run({ orderId: "ord-1" });
+    const d = h.renderArgs[0];
+    expect(d.items[0]).toMatchObject({ rate: 100, taxable: 200 });
+    expect(d.taxable).toBe(200);
+  });
+
   it("renders an interstate voucher (IGST, no CGST/SGST) for different-state party", async () => {
     h.customer.state_code = "29"; h.customer.gstin = "29AAACT1234A1Z5";
     const { res } = await run({ orderId: "ord-1" });

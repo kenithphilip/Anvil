@@ -18,8 +18,11 @@ import { IDENTITY_KEYS, planIdentityEdit } from "../_lib/order-identity.js";
 // background writeback). A client that sent one could reset it to the value a
 // stale view loaded, and the STALE_APPROVAL check would never fire. No screen
 // sends it.
+// approval is not here either: the approve branch below builds it with the
+// approver's id. When it was here, a PATCH with an approval and no status
+// wrote an approval nobody gave.
 const APPROVE_INPUTS = [
-  "status", "approval", "result",
+  "status", "result",
   "rule_findings", "anomaly_flags", "evidence_by_field", "line_edits",
   "blocker_summary", "format_change_summary", "cost_avoided_reason",
   "api_usage", "token_estimate",

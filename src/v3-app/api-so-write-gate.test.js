@@ -25,7 +25,13 @@ const makeDb = (rows) => ({
   from(table) {
     const filters = [];
     let patch = null;
+    let insert = null;
     const run = async () => {
+      if (insert) {
+        const row = { id: "00000000-0000-0000-0000-0000000000c1", ...clone(insert) };
+        if (table === "orders") rows.push(row);
+        return { data: [clone(row)], error: null };
+      }
       const list = table === "orders" ? rows : [];
       const hit = list.filter((r) => filters.every((f) => f(r)));
       if (patch) for (const r of hit) Object.assign(r, clone(patch));
@@ -38,7 +44,7 @@ const makeDb = (rows) => ({
       order() { return api; },
       limit() { return api; },
       update(p) { patch = p; return api; },
-      insert() { return api; },
+      insert(p) { insert = p; return api; },
       delete() { return api; },
       single: () => run().then((r) => ({ data: r.data[0] || null, error: r.data[0] ? null : { message: "not found" } })),
       maybeSingle: () => run().then((r) => ({ data: r.data[0] || null, error: null })),
@@ -68,7 +74,9 @@ vi.mock("../api/_lib/audit.js", () => ({
 }));
 vi.mock("../api/_lib/approval-evaluator.js", () => ({ evaluateApprovalsForOrder: async () => ({ created: [] }) }));
 vi.mock("../api/eval/promote.js", () => ({ promoteApprovedOrder: async () => ({ promoted: false }) }));
-vi.mock("../api/_lib/item-mapper.js", () => ({ lineCandidates: () => [], lineSapCandidates: () => [] }));
+vi.mock("../api/_lib/item-mapper.js", () => ({
+  lineCandidates: () => [], lineSapCandidates: () => [], mapLinesToItemMaster: async (_s, _t, _c, lines) => lines,
+}));
 vi.mock("../api/_lib/item-customer-parts.js", () => ({ upsertCustomerPart: async () => ({}) }));
 vi.mock("../api/_lib/order-reconcile.js", () => ({
   autoReconcileOrder: async () => {}, hasReconcilableLines: () => false, AUTO_RECONCILE_STATUSES: new Set(),
@@ -76,6 +84,7 @@ vi.mock("../api/_lib/order-reconcile.js", () => ({
 }));
 
 const { default: patchOrder } = await import("../api/orders/[id].js");
+const { default: createOrder } = await import("../api/orders/index.js");
 const { default: reconcileQuotes } = await import("../api/orders/reconcile_quotes.js");
 const { default: termsCheck } = await import("../api/orders/terms_check.js");
 const { default: attachQuote } = await import("../api/orders/attach_quote.js");
@@ -134,6 +143,8 @@ describe("PATCH /api/orders/[id]: an approver's decision stays open to finance",
     const res = await call(patchOrder, { method: "PATCH", body: { status: "APPROVED", approval: { payloadHash: "hash-gate-1" } } });
     expect(res._status).toBe(200);
     expect(H.db.rows[0].status).toBe("APPROVED");
+    // The approval names the approver; the server writes it.
+    expect(H.db.rows[0].approval).toMatchObject({ payloadHash: "hash-gate-1", approvedBy: "u-1" });
   });
 
   it("a key the handler never writes does not turn a decision into an edit", async () => {
@@ -166,6 +177,42 @@ describe("PATCH /api/orders/[id]: an approver's decision stays open to finance",
     as("finance");
     const res = await call(patchOrder, { method: "PATCH", body: { resolve_finding: { code: "line_count_shortfall", note: "checked" } } });
     expect(res._status).toBe(200);
+  });
+});
+
+describe("PATCH /api/orders/[id]: an approval is written only by an approve", () => {
+  // An approved order whose approval a line edit cleared. The hash is current,
+  // so a forged approval with that hash would pass every push check.
+  it.each(["PENDING_REVIEW", "APPROVED"])("a writer cannot set an approval on a %s order without approving it", async (status) => {
+    seed({ status });
+    as("sales_engineer");
+    const res = await call(patchOrder, { method: "PATCH", body: { approval: { payloadHash: "hash-gate-1", approvedBy: "u-9" } } });
+    expect(res._status).toBe(200);
+    expect(H.db.rows[0].approval).toBeNull();
+    expect(H.db.rows[0].status).toBe(status);
+  });
+});
+
+describe("POST /api/orders: a new order is a draft with no approval", () => {
+  it("whatever status, approval and hash the body sends", async () => {
+    H.db = makeDb([]);
+    as("sales_engineer");
+    const res = await call(createOrder, { body: {
+      po_number: "PO-GATE-9", status: "APPROVED",
+      approval: { payloadHash: "hash-forged", approvedBy: "u-9" }, payload_hash: "hash-forged",
+    } });
+    expect(res._status).toBe(201);
+    expect(H.db.rows).toHaveLength(1);
+    expect(H.db.rows[0]).toMatchObject({ po_number: "PO-GATE-9", status: "DRAFT", approval: null, payload_hash: null });
+  });
+
+  it.each(["finance", "procurement", "operator"])("%s may not create one (a coarse writer, read-only on sales orders)", async (role) => {
+    H.db = makeDb([]);
+    as(role);
+    const res = await call(createOrder, { body: { po_number: "PO-GATE-9" } });
+    expect(res._status).toBe(403);
+    expect(res._json.error.code).toBe("ACTION_FORBIDDEN");
+    expect(H.db.rows).toHaveLength(0);
   });
 });
 

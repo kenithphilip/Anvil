@@ -17,10 +17,18 @@ vi.mock("../api/_lib/supabase.js", () => ({
     from(table) {
       const rows = () => H.store[table] || [];
       const flt = [];
+      let error = null;
       const b = {
-        select() { return b; },
+        // The live orders table has no payment_terms column (no migration
+        // adds one), and PostgREST refuses a select that names it.
+        select(cols) {
+          if (table === "orders" && /\bpayment_terms\b/.test(String(cols || ""))) {
+            error = { code: "42703", message: "column orders.payment_terms does not exist" };
+          }
+          return b;
+        },
         eq(c, v) { flt.push((r) => r[c] === v); return b; },
-        _one() { return Promise.resolve({ data: rows().find((r) => flt.every((f) => f(r))) || null, error: null }); },
+        _one() { return Promise.resolve(error ? { data: null, error } : { data: rows().find((r) => flt.every((f) => f(r))) || null, error: null }); },
         maybeSingle() { return this._one(); },
         single() { return this._one(); },
         then(res) { return Promise.resolve({ data: rows().filter((r) => flt.every((f) => f(r))), error: null }).then(res); },
@@ -40,7 +48,7 @@ const run = async (query = {}, method = "GET") => {
 
 const order = () => ({
   id: "ord-1", tenant_id: "t-1", po_number: "P250432265", customer_id: "c-1",
-  payment_terms: "Net 60", created_at: "2026-04-16",
+  created_at: "2026-04-16",
   result: { salesOrder: {
     currency: "INR", payment_terms: "Net 60",
     customer: { name: "HYUNDAI MOTOR INDIA LTD", gstin: "27AAACO8335K1Z5" },

@@ -5,13 +5,15 @@
 // enqueued by the copilot (_lib/tally-enqueue.js), could still post a voucher.
 // Both handlers now share _lib/so-processing-mode.js, and these tests run the
 // real handlers. Only the Tally bridge client and the database are faked.
+// The drain also pushes a row only while its order is still the approved
+// order the row was queued for ("the order guard" below).
 // Invented fixtures.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const H = vi.hoisted(() => {
   process.env.CRON_SECRET = "cron-test-secret";
-  return { ctx: null, store: null, settingsError: false };
+  return { ctx: null, store: null, settingsError: false, ordersError: false };
 });
 
 vi.mock("../api/_lib/auth.js", async (importOriginal) => {
@@ -46,6 +48,7 @@ const makeSvc = () => ({
         if (table === "tenant_settings" && H.settingsError) {
           return { data: null, error: { code: "42703", message: "column so_processing_mode does not exist" } };
         }
+        if (table === "orders" && H.ordersError) return { data: null, error: { message: "connection reset" } };
         if (this._op === "insert") {
           const created = { id: table + "-" + (rows().length + 1), ...this._payload };
           rows().push(created);
@@ -88,13 +91,16 @@ const call = async (handler, { method = "POST", body = {}, headers = {} } = {}) 
 const PAST = "2026-01-01T00:00:00.000Z";
 const queueRow = (id, tenantId, orderId) => ({
   id, tenant_id: tenantId, company_id: "co-1", order_id: orderId, voucher_record_id: null,
-  payload_xml: "<ENVELOPE/>", attempt_count: 1, status: "pending", next_attempt_at: PAST,
+  payload_xml: "<ENVELOPE/>", payload_hash: "h-1", attempt_count: 1, status: "pending", next_attempt_at: PAST,
 });
+// The retry pushes only for an order that is still the approved one it queued.
+const approvedOrder = (id, tenantId) => ({ id, tenant_id: tenantId, status: "APPROVED", approval: { payloadHash: "h-1" }, payload_hash: "h-1" });
 const row = (id) => H.store.tally_retry_queue.find((r) => r.id === id);
 
 beforeEach(() => {
   vi.clearAllMocks();
   H.settingsError = false;
+  H.ordersError = false;
   H.ctx = { user: { id: "u-admin" }, tenantId: "t-a", role: "admin" };
   H.store = {
     tenant_settings: [
@@ -103,10 +109,7 @@ beforeEach(() => {
     ],
     tally_retry_queue: [queueRow("q-a", "t-a", "o-a"), queueRow("q-b", "t-b", "o-b")],
     tally_voucher_records: [],
-    orders: [
-      { id: "o-a", tenant_id: "t-a", status: "APPROVED" },
-      { id: "o-b", tenant_id: "t-b", status: "APPROVED" },
-    ],
+    orders: [approvedOrder("o-a", "t-a"), approvedOrder("o-b", "t-b")],
   };
 });
 
@@ -165,6 +168,51 @@ describe("tally/retry, cron", () => {
     expect(tallyResolveCompany.mock.calls[0][1]).toBe("t-a");
     expect(row("q-a").status).toBe("succeeded");
     expect(row("q-b")).toMatchObject({ status: "pending", attempt_count: 1 });
+  });
+});
+
+describe("tally/retry, the order guard", () => {
+  const orderA = () => H.store.orders.find((o) => o.id === "o-a");
+
+  it.each([
+    ["cancelled", { status: "CANCELLED" }, "order cancelled"],
+    ["returned for a fix", { status: "DRAFT", approval: null }, "order not approved"],
+    ["edited after it was queued", { payload_hash: "h-2" }, "order changed since it was queued"],
+  ])("does not push for an order that was %s", async (_label, change, reason) => {
+    Object.assign(orderA(), change);
+    const before = { ...orderA() };
+    const r = await call(retry);
+    expect(r.status).toBe(200);
+    expect(r.body.results[0]).toMatchObject({ id: "q-a", skipped: true, reason });
+    expect(tallyPush).not.toHaveBeenCalled();
+    // The row leaves the queue with the reason and keeps its XML.
+    expect(row("q-a")).toMatchObject({ status: "gave_up", last_error: "skipped::" + reason, payload_xml: "<ENVELOPE/>" });
+    expect(orderA()).toEqual(before);
+  });
+
+  it("does not push for an order of another tenant", async () => {
+    row("q-a").order_id = "o-b";
+    const r = await call(retry);
+    expect(r.body.results[0]).toMatchObject({ skipped: true, reason: "order not found" });
+    expect(tallyPush).not.toHaveBeenCalled();
+    expect(H.store.orders.find((o) => o.id === "o-b").status).toBe("APPROVED");
+  });
+
+  it("writes the exported status only to the queue row's tenant", async () => {
+    // Order ids are unique in the database; the filter is there in case one is not.
+    H.store.orders.push({ ...approvedOrder("o-a", "t-b") });
+    await call(retry);
+    expect(tallyPush).toHaveBeenCalledTimes(1);
+    expect(H.store.orders.filter((o) => o.id === "o-a").map((o) => [o.tenant_id, o.status]))
+      .toEqual([["t-a", "EXPORTED_TO_TALLY"], ["t-b", "APPROVED"]]);
+  });
+
+  it("keeps the row pending for a retry when the order cannot be read", async () => {
+    H.ordersError = true;
+    const r = await call(retry);
+    expect(r.body.results[0]).toMatchObject({ id: "q-a", ok: false });
+    expect(tallyPush).not.toHaveBeenCalled();
+    expect(row("q-a")).toMatchObject({ status: "pending", attempt_count: 2 });
   });
 });
 

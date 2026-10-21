@@ -112,7 +112,6 @@ export const ACTIONS: Record<string, Role[]> = {
   "so.push_tally":        ["sales_manager", "finance", "admin"],
   "so.approve":           ["sales_manager", "finance", "admin"],
   "so.cancel":            ["sales_manager", "admin"],
-  "so.edit_after_approval":["admin"],
   // Writing a sales order: line edits, header fields, send for approval,
   // extraction, validation, quote attach and reconcile, terms re-check,
   // schedule lines. The roles MATRIX.so gives "rw": sales_engineer and

@@ -52,7 +52,7 @@ export const buildSalesOrderAoa = (order, { schedules = [] } = {}) => {
     ["Customer", first(cust.name, order && order.customer_name) || ""],
     ["GSTIN", cust.gstin || ""],
     ["Currency", first(so.currency, cust.currency) || ""],
-    ["Payment Terms", first(so.payment_terms, cust.payment_terms, order && order.payment_terms) || ""],
+    ["Payment Terms", first(so.payment_terms, cust.payment_terms) || ""],
     ["Order Date", first(so.po_date, order && order.created_at) || ""],
     ["Order ID", (order && order.id) || ""],
     [],
@@ -108,7 +108,7 @@ export default async function handler(req, res) {
 
     const svc = serviceClient();
     const { data: order, error } = await svc.from("orders")
-      .select("id, po_number, customer_id, result, payment_terms, created_at, committed_delivery_date")
+      .select("id, po_number, customer_id, result, created_at, committed_delivery_date")
       .eq("tenant_id", ctx.tenantId).eq("id", orderId).maybeSingle();
     if (error) throw new Error(error.message);
     if (!order) return json(res, 404, { error: { message: "order not found" } });

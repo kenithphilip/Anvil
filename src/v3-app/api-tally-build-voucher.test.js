@@ -189,6 +189,17 @@ describe("buildSalesVoucherXml", () => {
     expect((xml.match(/<ACCOUNTINGALLOCATIONS.LIST>/g) || []).length).toBe(2);
   });
 
+  it("prints the rate the reconciler filled when the PO printed none", () => {
+    const order = { ...orderFixture, result: { salesOrder: { lineItems: [
+      { description: "Bearing", itemCode: "BR-6204", qty: 2, discounted_unit_price: 120, uom: "Nos", gst_pct: 18,
+        _mapped_item: { part_no: "BR-6204", print_name: "Bearing" } },
+    ] } } };
+    const { xml, metadata } = buildSalesVoucherXml({ order, company: sellerMH, customer: buyerMH });
+    expect(xml).toContain("<RATE>120/Nos</RATE>");
+    expect(xml).toContain("<AMOUNT>240</AMOUNT>");
+    expect(metadata.taxes.cgst).toBe(21.6);
+  });
+
   it("XML-escapes party name with quotes / ampersands", () => {
     const { xml } = buildSalesVoucherXml({
       order: orderFixture,

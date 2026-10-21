@@ -1,5 +1,5 @@
 import { applyCors, handlePreflight, json, readBody, sendError } from "../_lib/cors.js";
-import { resolveContext, requirePermission } from "../_lib/auth.js";
+import { resolveContext, requirePermission, requireAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit, recordEvent } from "../_lib/audit.js";
 import { parsePoDate } from "../_lib/parse-date.js";
@@ -32,7 +32,10 @@ const orderRow = (ctx, body) => {
   const row = {
     tenant_id: ctx.tenantId,
     customer_id: body.customer_id || null,
-    status: STATUS_VALUES.has(body.status) ? body.status : "DRAFT",
+    // An order created here starts as a draft with no approval. The status,
+    // the approval and the hash an approval binds to are written by the
+    // PATCH (orders/[id].js), which checks the approver.
+    status: "DRAFT",
     po_number: body.po_number || null,
     // Audit fix May 2026: callers (so-intake auto-detect, ERP
      // adapters) may supply DD/MM/YYYY (IN/EU/UK), MM/DD/YYYY
@@ -55,8 +58,8 @@ const orderRow = (ctx, body) => {
     anomaly_flags: body.anomaly_flags || [],
     evidence_by_field: body.evidence_by_field || {},
     line_edits: body.line_edits || [],
-    approval: body.approval || null,
-    payload_hash: body.payload_hash || null,
+    approval: null,
+    payload_hash: null,
     blocker_summary: body.blocker_summary || null,
     format_change_summary: body.format_change_summary || null,
     cost_avoided_reason: body.cost_avoided_reason || null,
@@ -125,6 +128,7 @@ export default async function handler(req, res) {
     }
     if (req.method === "POST") {
       requirePermission(ctx, "write");
+      requireAction(ctx, "so.write");
       const body = await readBody(req);
       const svc = serviceClient();
       // Derive the customer's country so parsePoDate inside

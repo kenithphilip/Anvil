@@ -66,6 +66,9 @@ import { mergeExtractedLines } from "../lib/line-merge";
 import { varianceLineFromGap, outstandingGaps } from "../lib/variance-line";
 import { lineRequisition, requisitionGroups, requisitionNotice } from "../lib/requisition";
 
+// The statuses in which an order's lines can be edited.
+const LINE_EDIT_STATUSES = new Set(["DRAFT", "PENDING_REVIEW", "BLOCKED"]);
+
 // Line-reconciliation table body, mounted inside the unified reconcile
 // view's ReviewPaneSelectionProvider so a row click drives the shared
 // field selection (which highlights + scrolls the PO PDF to that line's
@@ -1825,10 +1828,10 @@ const WiredSOWorkspace = () => {
   // so.admin, so.push_tally). The RBAC rules only define the
   // so.* namespace, so canEditLines was always false and every
   // line was read-only.
+  // Lines are edited only before approval (LINE_EDIT_STATUSES). An order past
+  // that point goes back to DRAFT first.
   const canEditLines = !!(RBAC && RBAC.canDo && RBAC.canDo("so.write"))
-    && o.status !== "CANCELLED"
-    && o.status !== "EXPORTED_TO_TALLY"
-    && o.status !== "RECONCILED";
+    && LINE_EDIT_STATUSES.has(o.status);
 
   // Manual line entry. Extraction misses lines — LlamaParse handed back a
   // shredded table and produced 6 of 45 on a live PO — and until now there was

@@ -27,6 +27,7 @@
 // callers handle that.
 
 import { tallyResolveCompany } from "./tally-client.js";
+import { enqueueTallyVoucher } from "./tally-enqueue.js";
 
 const DEFAULT_TOLERANCE_PCT = 0.50;
 const MAX_BATCH = 100;                       // per-run cap so a stuck cron doesn't burn
@@ -200,6 +201,35 @@ const compareOne = ({ tenantId, runId, vrec, order, tallyState, tolerancePct }) 
 
 // ---------- auto-fix paths ----------------------------------------
 
+// Re-queue a pushed voucher that Tally does not have; the retry drain does
+// the push. The XML says ACTION="Create", so each push can add one more
+// voucher to the ledger. The reconciler therefore queues one automatic
+// re-push per voucher record; after that the operator decides.
+// Returns "re_pushed" only when a row is in the queue.
+const requeueMissing = async (svc, tenantId, vrec) => {
+  const prior = await svc.from("tally_retry_queue").select("id")
+    .eq("tenant_id", tenantId).eq("voucher_record_id", vrec.id).limit(1);
+  if (prior.error) return "re_push_failed";
+  if ((prior.data || []).length) return "none";
+  let why;
+  try {
+    const r = await enqueueTallyVoucher(svc, { tenantId }, {
+      orderId: vrec.order_id,
+      companyId: vrec.company_id,
+      voucherRecordId: vrec.id,
+      voucherNo: vrec.voucher_no,
+    });
+    if (r.ok) return "re_pushed";
+    why = r.code + ": " + r.message;
+  } catch (e) {
+    // buildSalesVoucherXml throws when a line is not mapped to the item master.
+    why = e?.message || String(e);
+  }
+  // eslint-disable-next-line no-console
+  console.warn("[tally-reconciler] re-queue of vrec " + vrec.id + " failed: " + why);
+  return "re_push_failed";
+};
+
 const applyAutoFix = async (svc, finding, vrec) => {
   if (finding.finding_kind === "voucher_cancelled_in_tally") {
     // Mark the order as failed so the operator sees it on the
@@ -217,16 +247,7 @@ const applyAutoFix = async (svc, finding, vrec) => {
     return "order_failed";
   }
   if (finding.finding_kind === "missing_in_tally") {
-    // Re-enqueue for retry. The retry queue's existing logic
-    // re-pushes the voucher.
-    await svc.from("tally_retry_queue").insert({
-      tenant_id: finding.tenant_id,
-      tally_voucher_record_id: vrec.id,
-      attempt: 0,
-      next_attempt_at: new Date().toISOString(),
-      reason: "reconciler_missing_in_tally",
-    });
-    return "re_pushed";
+    return await requeueMissing(svc, finding.tenant_id, vrec);
   }
   // For total_mismatch and line_count_mismatch we don't auto-fix
   // (could have legitimate causes like partial deliveries). The
@@ -288,7 +309,7 @@ export const driftCheck = async (svc, params) => {
 
   // Pull candidate voucher records.
   let q = svc.from("tally_voucher_records")
-    .select("id, order_id, voucher_no, voucher_type, status, payload_hash, external_voucher_no, tally_voucher_id")
+    .select("id, order_id, company_id, voucher_no, voucher_type, status, payload_hash, external_voucher_no, tally_voucher_id")
     .eq("tenant_id", tenantId)
     .eq("status", "exported")
     .limit(MAX_BATCH);
@@ -359,10 +380,8 @@ export const driftCheck = async (svc, params) => {
         findings.sort((a, b) => sevOrder.indexOf(a.severity) - sevOrder.indexOf(b.severity));
         const target = findings[0];
         const fix = await applyAutoFix(svc, target, vrec);
-        if (fix !== "none") {
-          target.auto_fix_applied = fix;
-          autoFixCount++;
-        }
+        if (fix !== "none") target.auto_fix_applied = fix;
+        if (fix !== "none" && fix !== "re_push_failed") autoFixCount++;
       }
 
       const ins = await svc.from("tally_reconciliation_findings").insert(findings);

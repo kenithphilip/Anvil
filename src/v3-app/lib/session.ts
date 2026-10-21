@@ -5,6 +5,7 @@
 
 import { AnvilBackend } from "./api";
 import { lsRemove } from "./storage-keys";
+import { setServerRole } from "./rbac";
 
 const INTENDED_ROUTE_KEY_SUFFIX = "v3_intended_route";
 
@@ -17,6 +18,8 @@ export const signOutAndRedirect = (): void => {
     AnvilBackend?.setSession?.(null);
     lsRemove("auth_profile");
     lsRemove(INTENDED_ROUTE_KEY_SUFFIX);
+    // The next user on this browser starts at viewer until their own role loads.
+    setServerRole("viewer");
   } catch (_) {
     // Storage may be unavailable (private mode, locked-down browsers).
     // setSession still clears sessionStorage and dispatches "anvil:session",

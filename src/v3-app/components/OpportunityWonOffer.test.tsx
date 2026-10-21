@@ -6,7 +6,7 @@
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, render, waitFor, fireEvent } from "@testing-library/react";
-import { installBackend } from "../test-utils";
+import { installBackend, installRbac } from "../test-utils";
 import { OpportunityWonOffer } from "./OpportunityWonOffer";
 
 const ORDER = { id: "ord-1", status: "PENDING_REVIEW", po_number: "PO-TEST-77", customer_id: "cust-1", opportunity_id: "opp-1" };
@@ -20,7 +20,7 @@ describe("OpportunityWonOffer", () => {
     updateSpy = vi.fn(async (p: any) => ({ opportunity: { ...OPEN, stage: p.stage } }));
     installBackend({ sales: { listOpportunities: listSpy, updateOpportunity: updateSpy } });
   };
-  beforeEach(() => install([OPEN]));
+  beforeEach(() => { install([OPEN]); installRbac("sales_engineer"); });
   afterEach(() => { try { window.localStorage.removeItem("anvil:v3_role"); } catch (_) { /* no storage */ } });
 
   it("offers the win, and moves the stage only after the click and the confirm", async () => {
@@ -89,7 +89,7 @@ describe("OpportunityWonOffer", () => {
   });
 
   it("is not offered to a role that cannot edit opportunities", async () => {
-    window.localStorage.setItem("anvil:v3_role", "procurement");
+    installRbac("procurement");
     const { queryByText } = render(<OpportunityWonOffer order={ORDER} />);
     await Promise.resolve();
     expect(listSpy).not.toHaveBeenCalled();

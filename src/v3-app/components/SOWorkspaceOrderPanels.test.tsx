@@ -7,7 +7,7 @@
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, waitFor, fireEvent, act } from "@testing-library/react";
-import { installBackend } from "../test-utils";
+import { installBackend, installRbac } from "../test-utils";
 import { OrderHeaderEditor } from "./SOWorkspaceOrderPanels";
 
 const CONTACTS = [
@@ -46,6 +46,7 @@ describe("OrderHeaderEditor delivery point contact", () => {
       customers: { listContacts },
       orders: { update },
     });
+    installRbac("sales_engineer");
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 

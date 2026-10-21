@@ -326,10 +326,12 @@ describe("POST /api/communications/log", () => {
       const r = await postLog(touch());
       expect([200, 403]).toContain(r.status);
       admitted[role] = r.status === 200;
+      window.localStorage.setItem("anvil:v3_server_role", role);
       window.localStorage.setItem("anvil:v3_role", role);
       shown[role] = RBAC.canDo("touch.log");
     }
     window.localStorage.removeItem("anvil:v3_role");
+    window.localStorage.removeItem("anvil:v3_server_role");
     expect(shown).toEqual(admitted);
     // Not vacuous: both outcomes occur.
     expect(admitted.sales_engineer).toBe(true);

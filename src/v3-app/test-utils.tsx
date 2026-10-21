@@ -88,7 +88,11 @@ export const installBackend = (overrides?: Record<string, unknown>) => {
 
 export const installRbac = (role: string = "admin") => {
   if (typeof window === "undefined") return;
-  try { window.localStorage.setItem("anvil:v3_role", role); window.localStorage.setItem("obara:v3_role", role); }
+  // The server role first: the view-as role (v3_role) can only narrow it.
+  try {
+    window.localStorage.setItem("anvil:v3_server_role", role);
+    window.localStorage.setItem("anvil:v3_role", role); window.localStorage.setItem("obara:v3_role", role);
+  }
   catch (_) {}
 };
 

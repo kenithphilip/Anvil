@@ -35,6 +35,9 @@ export default async function handler(req, res) {
           created_at: ctx.user.created_at || null,
         },
         memberships: memberships.data || [],
+        // The role this request's tenant gives the user: what every server
+        // gate checks. The v3 app sets its button gates from it (rbac.ts).
+        role: ctx.role,
       });
     }
 

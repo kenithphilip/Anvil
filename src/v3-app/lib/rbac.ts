@@ -167,20 +167,54 @@ export const ACTIONS: Record<string, Role[]> = {
 
 // Role is persisted under the `anvil:` prefix; legacy `obara:`
 // reads still work via the storage-keys helper.
-import { lsGet, lsSet } from "./storage-keys";
+import { lsGet, lsSet, lsRemove } from "./storage-keys";
 
+// ROLE_KEY is the top-bar "view as" choice. SERVER_ROLE_KEY is the role the
+// server gives the signed-in user (ctx.role, read from /api/auth/profile by
+// app.tsx). The view-as choice can only narrow the server role.
 const ROLE_KEY = "v3_role";
+const SERVER_ROLE_KEY = "v3_server_role";
 
-export const getRole = (): Role => {
-  return (lsGet(ROLE_KEY) as Role) || "sales_engineer";
-};
-
-export const setRole = (role: Role): void => {
-  if (!ROLES.includes(role)) throw new Error("Unknown role: " + role);
-  lsSet(ROLE_KEY, role);
+const emitRoleChange = (role: Role): void => {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("rbac:change", { detail: { role } }));
   }
+};
+
+// Fail closed: no server role yet, a failed read or an unknown value is viewer.
+export const getServerRole = (): Role => {
+  const r = lsGet(SERVER_ROLE_KEY) as Role;
+  return ROLES.includes(r) ? r : "viewer";
+};
+
+// Store the server role. A new value drops the old view-as choice, so the
+// next user on this browser does not inherit it.
+export const setServerRole = (role: unknown): void => {
+  const r: Role = ROLES.includes(role as Role) ? (role as Role) : "viewer";
+  if (lsGet(SERVER_ROLE_KEY) !== r) lsRemove(ROLE_KEY);
+  lsSet(SERVER_ROLE_KEY, r);
+  emitRoleChange(getRole());
+};
+
+// The roles the switcher may view as. The server lets admin do everything
+// (auth.js hasAction), so an admin may view as any role. Every role can do
+// at least what viewer can, so anyone may view as viewer.
+// shortcut: no subset table between the other roles, add one if a manager must view as a rep.
+export const viewAsRoles = (): Role[] => {
+  const s = getServerRole();
+  if (s === "admin") return ROLES;
+  return s === "viewer" ? ["viewer"] : [s, "viewer"];
+};
+
+export const getRole = (): Role => {
+  const v = lsGet(ROLE_KEY) as Role;
+  return viewAsRoles().includes(v) ? v : getServerRole();
+};
+
+export const setRole = (role: Role): void => {
+  if (!viewAsRoles().includes(role)) throw new Error("Cannot view as role: " + role);
+  lsSet(ROLE_KEY, role);
+  emitRoleChange(role);
 };
 
 // Which base role each non-base role inherits its matrix cells from.
@@ -233,6 +267,9 @@ export const RBAC = {
   ROLES,
   role: getRole,
   setRole,
+  serverRole: getServerRole,
+  setServerRole,
+  viewAsRoles,
   canRead,
   canWrite,
   canApprove,

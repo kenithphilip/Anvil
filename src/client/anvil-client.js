@@ -910,6 +910,14 @@
     // not_a_deviation, with a required reason. Append-only on the server.
     termsDecide: async (orderId, flagId, decision, reason) =>
       apiFetch("/api/orders/terms_decide", { method: "POST", body: { order_id: orderId, flag_id: flagId, decision, reason } }),
+    // The Mode B handoff to the order processing team. handoff() is the
+    // preview ({ enabled: false } when the tenant has it off);
+    // handoffSend() sends it. fields: { required_by, contact_name,
+    // contact_phone, modes }. resend: true sends a handoff that was sent.
+    handoff: async (orderId) =>
+      apiFetch("/api/orders/handoff?order_id=" + encodeURIComponent(orderId)),
+    handoffSend: async (orderId, fields, resend) =>
+      apiFetch("/api/orders/handoff", { method: "POST", body: { order_id: orderId, fields, ...(resend ? { resend: true } : {}) } }),
     // One list of what needs a decision on the order: reconcile, findings,
     // anomaly rules, extraction, terms flags and the customer match.
     // opts.includeShadow: an admin reading shadow-mode terms rows (the server

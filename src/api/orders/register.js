@@ -21,6 +21,9 @@
 //   channel         upload | email | whatsapp | chat | voice | quote | portal
 //   status          an order status
 //   has_flags=1     only orders whose reconciliation recorded a flag
+//   not_handed_off=1
+//                   only orders whose handoff was not sent: never tried,
+//                   failed, or no mail provider
 //   has_undecided_terms=1
 //                   only orders with a terms flag that needs a decision and
 //                   has none. 409 MIGRATION_NOT_APPLIED before migration 250.
@@ -46,6 +49,7 @@ import { migrationErrorBody, migrationNotApplied, termsDbError } from "../_lib/t
 import { historyByFlag, readDecisions } from "../_lib/terms/decisions.js";
 import { needsDecision } from "../_lib/terms/compare.js";
 import { SEVERITY_LEVELS } from "../_lib/terms/taxonomy.js";
+import { userDisplayNames } from "../_lib/assignee.js";
 
 // The order_status enum (001_init.sql).
 const STATUS_VALUES = new Set([
@@ -103,7 +107,8 @@ export const parseRegisterQuery = (query = {}) => {
   const hasFlags = query.has_flags === "1" || query.has_flags === "true";
   const hasUndecidedTerms = query.has_undecided_terms === "1" || query.has_undecided_terms === "true";
   const includeShadow = query.include_shadow === "1" || query.include_shadow === "true";
-  return { page, pageSize, from, to, customer, channel, status, hasFlags, hasUndecidedTerms, includeShadow };
+  const notHandedOff = query.not_handed_off === "1" || query.not_handed_off === "true";
+  return { page, pageSize, from, to, customer, channel, status, hasFlags, hasUndecidedTerms, includeShadow, notHandedOff };
 };
 
 // The filtered, tenant-scoped query, newest first. Every caller passes the
@@ -118,6 +123,10 @@ const filteredQuery = (svc, tenantId, f, { count = false, cols = REGISTER_SELECT
   if (f.status) q = q.eq("status", f.status);
   if (f.channel) q = applyChannelFilter(q, f.channel);
   if (f.hasFlags) q = q.neq(FLAGS_TEXT, "[]");
+  // shortcut: a sent handoff whose order changed since is not matched here
+  // (it compares a jsonb key with a column); upgrade with a generated column
+  // if the filter must find those too. The column shows them.
+  if (f.notHandedOff) q = q.or("handoff_status.is.null,handoff_status.neq.sent");
   return q.order("created_at", { ascending: false }).order("id", { ascending: false });
 };
 
@@ -271,15 +280,18 @@ const readRowsById = async (svc, tenantId, ids) => {
 };
 
 const buildRows = async (svc, tenantId, raw, terms) => {
-  const [runs, erp, termsByOrder] = await Promise.all([
+  const [runs, erp, termsByOrder, senders] = await Promise.all([
     loadRuns(svc, tenantId, raw),
     loadErp(svc, tenantId, raw.map((r) => r.id)),
     loadTerms(svc, tenantId, raw.map((r) => r.id), terms),
+    // Who sent each handoff: one lookup per distinct sender on the page.
+    userDisplayNames(svc, raw.map((r) => r.handoff_sent_by)),
   ]);
   return raw.map((r) => registerRow(r, {
     run: r.extraction_run_id ? runs.get(r.extraction_run_id) || null : null,
     erp: erp.get(r.id) || null,
     terms: termsByOrder.get(r.id) || null,
+    sentByName: senders.get(r.handoff_sent_by) || null,
   }));
 };
 

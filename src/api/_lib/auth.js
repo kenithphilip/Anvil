@@ -264,6 +264,12 @@ export const SERVER_ACTIONS = {
   // admin. orders/terms_decide.js applies both. Mirrors rbac.ts.
   "order.terms_decide":      new Set(["sales_engineer", "sales_manager", "admin"]),
   "order.terms_accept_high": new Set(["sales_manager", "admin"]),
+  // Send the order to the order processing team (the Mode B handoff,
+  // docs/SO_TERMS_AND_HANDOFF_SCOPE.md 8.6). The engineer who verified the
+  // order sends it; the operator (the clerk's lane) may send it again. An
+  // engineer cannot use /api/communications/send, which needs approve, so
+  // orders/handoff.js sends directly. Mirrors rbac.ts.
+  "order.handoff":           new Set(["sales_engineer", "sales_manager", "operator", "admin"]),
   // The sales-order actions the SO screens check with rbac.ts canDo. Every
   // canDo key those screens use is registered here with the client's roles
   // (rbac-so-parity.test.tsx renders the screens and checks it).

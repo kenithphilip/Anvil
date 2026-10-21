@@ -355,6 +355,7 @@ Cell legend: `r`=read, `w`=write, `a`=approve, `x`=admin, blank=hidden.
 | src/api/orders/extraction_jobs_id.js | read, write |
 | src/api/orders/extraction_jobs.js | read, write |
 | src/api/orders/extraction_status.js | read |
+| src/api/orders/handoff.js | write |
 | src/api/orders/index.js | read, write |
 | src/api/orders/pipeline_state.js | read |
 | src/api/orders/print_jobs.js | read, approve |

@@ -1,8 +1,8 @@
-// Pending-Sales-Order data layer — Tally part/description split + local-vs-import
+// Pending-Sales-Order data layer: Tally part/description split + local-vs-import
 // origin classification. Pure + deterministic; no DB, no req/res.
 //
 // Two facts the "Pending Sales Order" tracker needs that Anvil does not model
-// today, both encoded in strings the way Tally / Obara write them:
+// today, both encoded in strings the way Tally and the tenant write them:
 //
 //   1. The line's Description column MUNGES the descriptive noun and the part
 //      code the way Tally stores an item-master name, e.g.
@@ -11,10 +11,10 @@
 //        "Gear Case Assy C5E0069(O/C)"  -> desc "Gear Case Assy", part "C5E0069"
 //      We must carry description and part number SEPARATELY.
 //
-//   2. The Obara origin convention:
+//   2. The tenant origin convention:
 //        - a "-I" suffix on the part  => LOCALLY made / assembled (India); its
 //          Source PO is a WORK ORDER (reference prefix WOPOOI-…-OI); no in-transit.
-//        - an "(O/x)" marker (O/C, O/J, O/K, O/T, O/F) => IMPORTED from the Obara
+//        - an "(O/x)" marker (O/C, O/J, O/K, O/T, O/F) => IMPORTED from the group
 //          subsidiary in country x; its Source PO is a procurement PO
 //          (OIPOOC/OIPOOJ/OIPOOK-…) with the full in-transit ladder.
 //
@@ -24,10 +24,10 @@
 
 import { splitPartFromDescription, looksLikePartCode } from "../docai/part-split.js";
 
-// Obara subsidiary country letter -> canonical vocabularies. `source_country`
+// Group subsidiary country letter -> canonical vocabularies. `source_country`
 // matches item_master.source_country / bom-format.js ("O-CHINA" etc.); `iso` is
 // the ISO-3166-alpha-2 the ItemDetailDrawer / delays.isForeign path expects.
-export const OBARA_COUNTRY = {
+export const ORIGIN_COUNTRY = {
   C: { iso: "CN", source_country: "O-CHINA", name: "China" },
   J: { iso: "JP", source_country: "O-JAPAN", name: "Japan" },
   K: { iso: "KR", source_country: "O-KOREA", name: "Korea" },
@@ -35,21 +35,21 @@ export const OBARA_COUNTRY = {
   F: { iso: "FR", source_country: "O-FRANCE", name: "France" },
   I: { iso: "IN", source_country: "O-INDIA", name: "India" },
 };
-const INDIA = OBARA_COUNTRY.I;
+const INDIA = ORIGIN_COUNTRY.I;
 
-// (O/C), ( O / K ), (O/c) — tolerant of spacing/case. Captures the letter.
+// (O/C), ( O / K ), (O/c): tolerant of spacing/case. Captures the letter.
 const ORIGIN_MARKER_RE = /\(\s*O\s*\/\s*([CJKTFIcjktfi])\s*\)/;
 // A part code carrying the local "-I" suffix (e.g. OID1292-I, TNA-16-04-25-1-I).
 const LOCAL_SUFFIX_RE = /-I$/i;
 
-// Source Po No prefix. WOPO = work order (local manufacturing); OIPO = Obara
-// India PO. Both are followed by O<country-letter> (WOPOOI, OIPOOC, …).
+// Source Po No prefix. WOPO = work order (local manufacturing); OIPO = the
+// tenant India PO. Both are followed by O<country-letter> (WOPOOI, OIPOOC, …).
 const REF_RE = /^\s*(WOPO|OIPO)\s*O([CJKTFIcjktfi])/i;
 
 const clean = (s) => String(s == null ? "" : s).replace(/\s+/g, " ").trim();
-// A real Obara/Tally part code carries at least one digit (OID1292-I, DB6-90-510,
+// A real Tally part code carries at least one digit (OID1292-I, DB6-90-510,
 // C5E0069, TNA-16-04-25-1-I). This rejects code-SHAPED abbreviations the shared
-// splitter would otherwise grab — notably "W/O" (without) in "Transformer W/O
+// splitter would otherwise grab, notably "W/O" (without) in "Transformer W/O
 // Terminal Block", or "C/W", which have no digit.
 const hasDigit = (s) => /\d/.test(String(s || ""));
 
@@ -62,7 +62,7 @@ export const splitTallyPartDescription = (raw) => {
   const text = clean(raw);
   if (!text) return { part_no: null, description: null, origin_marker: null };
 
-  // Peel an (O/x) marker first so it can't break code detection — it appears
+  // Peel an (O/x) marker first so it can't break code detection: it appears
   // both glued ("…C5E0069(O/C)") and spaced ("… (O/C)").
   let origin_marker = null;
   let cleaned = text;
@@ -79,7 +79,7 @@ export const splitTallyPartDescription = (raw) => {
 
   const split = splitPartFromDescription(cleaned);
   if (!split || !hasDigit(split.partNumber)) {
-    // No real (digit-bearing) code — a service / charge line, a "W/O"-style
+    // No real (digit-bearing) code: a service / charge line, a "W/O"-style
     // abbreviation, or a cell whose part number lives elsewhere. Keep the full
     // cleaned text as the description rather than surgically removing a word.
     return { part_no: null, description: cleaned || null, origin_marker };
@@ -100,7 +100,7 @@ export const classifySourcePoRef = (ref) => {
   if (!m) return null;
   const kind = m[1].toUpperCase();          // WOPO | OIPO
   const c = m[2].toUpperCase();             // country letter
-  const country = OBARA_COUNTRY[c] || null;
+  const country = ORIGIN_COUNTRY[c] || null;
   const ref_prefix = ("" + m[1] + "O" + m[2]).toUpperCase();
   if (kind === "WOPO") {
     // Work order: always locally manufactured, regardless of the trailing letter.
@@ -123,7 +123,7 @@ const markerVerdict = (marker) => {
   if (marker === "-I") return { origin: "local", country: INDIA.iso, source_country: INDIA.source_country };
   const m = marker.match(/^O\/([CJKTFI])$/i);
   if (!m) return null;
-  const c = OBARA_COUNTRY[m[1].toUpperCase()];
+  const c = ORIGIN_COUNTRY[m[1].toUpperCase()];
   if (!c) return null;
   const local = c.iso === "IN";
   return { origin: local ? "local" : "import", country: c.iso, source_country: c.source_country };

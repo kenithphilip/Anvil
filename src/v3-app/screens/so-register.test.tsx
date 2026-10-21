@@ -70,7 +70,7 @@ describe("SO register: rows", () => {
     expect(register).toHaveBeenCalledTimes(1);
     expect(lastParams()).toEqual({
       page: 1, page_size: 50, from: "", to: "", customer: "", channel: "", status: "", has_flags: "",
-      has_undecided_terms: "", include_shadow: "",
+      has_undecided_terms: "", not_handed_off: "", include_shadow: "",
     });
   });
 });

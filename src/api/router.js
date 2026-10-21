@@ -414,6 +414,7 @@ import ordersRegister         from "./orders/register.js";
 import ordersTerms            from "./orders/terms.js";
 import ordersTermsCheck       from "./orders/terms_check.js";
 import ordersTermsDecide      from "./orders/terms_decide.js";
+import ordersHandoff          from "./orders/handoff.js";
 import ordersExceptions       from "./orders/exceptions.js";
 import ordersExtractionJobs   from "./orders/extraction_jobs.js";
 import ordersExtractionJobsId from "./orders/extraction_jobs_id.js";
@@ -685,6 +686,7 @@ const STATIC_ROUTES = {
   "/orders/terms":                  ordersTerms,
   "/orders/terms_check":            ordersTermsCheck,
   "/orders/terms_decide":           ordersTermsDecide,
+  "/orders/handoff":                ordersHandoff,
   "/orders/exceptions":             ordersExceptions,
   "/supplier_rfq":                  supplierRfqIndex,
   "/supplier_rfq/send":             supplierRfqSend,

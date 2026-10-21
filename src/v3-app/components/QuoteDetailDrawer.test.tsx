@@ -26,6 +26,7 @@ const ITEMS = [
 let transitionSpy: any;
 
 beforeEach(() => {
+  installRbac("sales_engineer");
   // The drawer loads quote_lines + document_templates via its local
   // fetchJson helper (global fetch). The item picker uses the
   // AnvilBackend.admin.listItemMaster facade.

@@ -4,14 +4,16 @@
 // mapping.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { ROLES, MATRIX, ACTIONS, RBAC, getRole, setRole, canRead, canWrite, canApprove, isAdmin, canDo, filterNav } from "./rbac";
+import { ROLES, MATRIX, ACTIONS, RBAC, getRole, setRole, getServerRole, setServerRole, viewAsRoles, canRead, canWrite, canApprove, isAdmin, canDo, filterNav } from "./rbac";
 
 beforeEach(() => {
   // Clear both prefixes so the storage-keys read-fallback layer
   // doesn't carry a value over into the test.
   try {
-    window.localStorage.removeItem("anvil:v3_role");
-    window.localStorage.removeItem("obara:v3_role");
+    for (const k of ["v3_role", "v3_server_role"]) {
+      window.localStorage.removeItem("anvil:" + k);
+      window.localStorage.removeItem("obara:" + k);
+    }
   } catch (_) {}
 });
 
@@ -41,26 +43,72 @@ describe("ROLES + MATRIX shape", () => {
   });
 });
 
-describe("getRole / setRole", () => {
-  it("defaults to sales_engineer when no localStorage entry", () => {
+describe("getRole / setRole: the server role is the ceiling", () => {
+  it("fails closed to viewer before the server role is known", () => {
+    expect(getServerRole()).toBe("viewer");
+    expect(getRole()).toBe("viewer");
+    expect(canDo("so.cancel")).toBe(false);
+    expect(canWrite("so")).toBe(false);
+  });
+  it("an unknown or missing server role is viewer", () => {
+    setServerRole("superuser");
+    expect(getRole()).toBe("viewer");
+    setServerRole(undefined);
+    expect(getRole()).toBe("viewer");
+  });
+  it("a server admin on a fresh browser may cancel and return an order for fix", () => {
+    // The 2026-10-21 report: no v3_role in this browser used to mean
+    // sales_engineer, so an admin saw cancel and return for fix disabled.
+    setServerRole("admin");
+    expect(getRole()).toBe("admin");
+    expect(canDo("so.cancel")).toBe(true);
+    expect(canDo("so.approve")).toBe(true);
+  });
+  it("a stored view-as role wider than the server role is ignored", () => {
+    setServerRole("sales_engineer");
+    window.localStorage.setItem("anvil:v3_role", "admin");
+    expect(getRole()).toBe("sales_engineer");
+    expect(canDo("so.cancel")).toBe(false);
+  });
+  it("setRole refuses to widen past the server role", () => {
+    setServerRole("sales_engineer");
+    expect(viewAsRoles()).toEqual(["sales_engineer", "viewer"]);
+    expect(() => setRole("admin")).toThrow();
+    expect(() => setRole("sales_manager")).toThrow();
     expect(getRole()).toBe("sales_engineer");
   });
-  it("setRole persists + emits a custom event", () => {
+  it("setRole may narrow to viewer, and emits rbac:change", () => {
+    setServerRole("sales_manager");
     let captured = null;
     const handler = (e) => { captured = e.detail.role; };
     window.addEventListener("rbac:change", handler);
-    setRole("admin");
-    expect(getRole()).toBe("admin");
-    expect(captured).toBe("admin");
+    setRole("viewer");
     window.removeEventListener("rbac:change", handler);
+    expect(getRole()).toBe("viewer");
+    expect(captured).toBe("viewer");
+    expect(canWrite("so")).toBe(false);
+  });
+  it("a server admin may view as any role", () => {
+    setServerRole("admin");
+    expect(viewAsRoles()).toEqual(ROLES);
+    setRole("procurement");
+    expect(getRole()).toBe("procurement");
+    expect(canDo("tally.push")).toBe(false);
+  });
+  it("a new server role drops the previous user's view-as choice", () => {
+    setServerRole("admin");
+    setRole("viewer");
+    setServerRole("sales_manager");
+    expect(getRole()).toBe("sales_manager");
   });
   it("setRole rejects unknown roles", () => {
+    setServerRole("admin");
     expect(() => setRole("nobody" as any)).toThrow();
   });
 });
 
 describe("canRead / canWrite / canApprove for sales_manager", () => {
-  beforeEach(() => setRole("sales_manager"));
+  beforeEach(() => setServerRole("sales_manager"));
   it("can read + write SOs and approve approvals", () => {
     expect(canRead("so")).toBe(true);
     expect(canWrite("so")).toBe(true);
@@ -80,7 +128,7 @@ describe("canRead / canWrite / canApprove for sales_manager", () => {
 
 describe("design roles inherit a base sales role + gun-data overrides", () => {
   it("design_engineer inherits sales_engineer's cells but gets rw on spares/items", () => {
-    setRole("design_engineer");
+    setServerRole("design_engineer");
     // Override: full write on the spare-matrix + item/drawing data.
     expect(canWrite("spares")).toBe(true);
     expect(canWrite("items")).toBe(true);      // sales_engineer is read-only on items; design overrides to rw
@@ -90,7 +138,7 @@ describe("design roles inherit a base sales role + gun-data overrides", () => {
     expect(isAdmin()).toBe(false);
   });
   it("design_manager inherits sales_manager and can write the spare matrix", () => {
-    setRole("design_manager");
+    setServerRole("design_manager");
     expect(canWrite("spares")).toBe(true);
     expect(canWrite("items")).toBe(true);
     expect(canRead("admin")).toBe(false);
@@ -98,7 +146,7 @@ describe("design roles inherit a base sales role + gun-data overrides", () => {
 });
 
 describe("customer_support role (read-only viewer + can share spare matrices)", () => {
-  beforeEach(() => setRole("customer_support"));
+  beforeEach(() => setServerRole("customer_support"));
   it("can VIEW the spare matrix + customers but cannot edit them (inherits viewer)", () => {
     expect(canRead("spares")).toBe(true);
     expect(canWrite("spares")).toBe(false);
@@ -114,16 +162,16 @@ describe("customer_support role (read-only viewer + can share spare matrices)", 
 describe("spare_matrix.share action allowlist", () => {
   it("allows sales, design, customer_support, admin — not viewer/procurement", () => {
     for (const r of ["sales_engineer", "sales_manager", "design_engineer", "design_manager", "customer_support", "admin"]) {
-      setRole(r as any); expect(canDo("spare_matrix.share"), `${r} should share`).toBe(true);
+      setServerRole(r as any); expect(canDo("spare_matrix.share"), `${r} should share`).toBe(true);
     }
     for (const r of ["viewer", "procurement", "finance", "operator"]) {
-      setRole(r as any); expect(canDo("spare_matrix.share"), `${r} should NOT share`).toBe(false);
+      setServerRole(r as any); expect(canDo("spare_matrix.share"), `${r} should NOT share`).toBe(false);
     }
   });
 });
 
 describe("admin role gates", () => {
-  beforeEach(() => setRole("admin"));
+  beforeEach(() => setServerRole("admin"));
   it("isAdmin true", () => {
     expect(isAdmin()).toBe(true);
   });
@@ -141,25 +189,25 @@ describe("admin role gates", () => {
 
 describe("canDo action gates", () => {
   it("operator can amc.generate_visits, sales_engineer cannot", () => {
-    setRole("operator");
+    setServerRole("operator");
     expect(canDo("amc.generate_visits")).toBe(true);
-    setRole("sales_engineer");
+    setServerRole("sales_engineer");
     expect(canDo("amc.generate_visits")).toBe(false);
   });
   it("finance can tally.push, procurement cannot", () => {
-    setRole("finance");
+    setServerRole("finance");
     expect(canDo("tally.push")).toBe(true);
-    setRole("procurement");
+    setServerRole("procurement");
     expect(canDo("tally.push")).toBe(false);
   });
   it("unknown actions default to allow (server enforces)", () => {
-    setRole("viewer");
+    setServerRole("viewer");
     expect(canDo("totally.unknown.action")).toBe(true);
   });
 });
 
 describe("filterNav", () => {
-  beforeEach(() => setRole("sales_engineer"));
+  beforeEach(() => setServerRole("sales_engineer"));
   it("removes inaccessible items + drops empty groups", () => {
     const NAV = [
       { label: "Sales", items: [{ id: "leads" }, { id: "opps" }, { id: "admin" }] },

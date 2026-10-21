@@ -5,7 +5,7 @@
 import React from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, waitFor, fireEvent } from "@testing-library/react";
-import { installBackend } from "../test-utils";
+import { installBackend, installRbac } from "../test-utils";
 import { OpportunityQuotesPanel } from "./OpportunityQuotesPanel";
 
 const QUOTES = [
@@ -18,6 +18,7 @@ describe("OpportunityQuotesPanel", () => {
   beforeEach(() => {
     listSpy = vi.fn(async () => ({ quotes: QUOTES }));
     installBackend({ quotes: { list: listSpy } });
+    installRbac("sales_engineer");
   });
 
   it("calls quotes.list with the opportunity_id filter", async () => {

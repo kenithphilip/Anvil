@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { signOutAndRedirect } from "./session";
 import * as api from "./api";
 import * as storage from "./storage-keys";
+import { getRole, setServerRole } from "./rbac";
 
 // signOutAndRedirect is a one-shot sign-out helper. The behaviour
 // the test locks: it always clears the in-memory session even when
@@ -27,6 +28,17 @@ describe("signOutAndRedirect", () => {
     expect(setSession).toHaveBeenCalledWith(null);
     expect(lsRemove).toHaveBeenCalledWith("auth_profile");
     expect(lsRemove).toHaveBeenCalledWith("v3_intended_route");
+  });
+
+  it("drops the signed-out user's role, so the next user starts at viewer", () => {
+    Object.defineProperty(api, "AnvilBackend", {
+      configurable: true,
+      get: () => ({ setSession: () => undefined }),
+    });
+    setServerRole("admin");
+    expect(getRole()).toBe("admin");
+    signOutAndRedirect();
+    expect(getRole()).toBe("viewer");
   });
 
   it("redirects to the marketing landing", () => {

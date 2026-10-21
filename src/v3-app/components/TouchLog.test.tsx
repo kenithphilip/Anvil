@@ -6,6 +6,7 @@ import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, waitFor, fireEvent } from "@testing-library/react";
 import { TouchLog, defaultNextFollowup } from "./TouchLog";
+import { installRbac } from "../test-utils";
 
 let listSpy: any;
 let logSpy: any;
@@ -28,6 +29,7 @@ beforeEach(() => {
     communications: { list: listSpy, log: logSpy },
     customers: { listContacts: listContactsSpy },
   };
+  installRbac("sales_engineer");
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -141,7 +143,7 @@ describe("TouchLog", () => {
   });
 
   it("shows the timeline but no Log form to a role the endpoint refuses", async () => {
-    window.localStorage.setItem("anvil:v3_role", "viewer");
+    installRbac("viewer");
     rows = [{ id: "t-1", document_type: "rep_touch", channel: "call", body: "Called stores", created_at: "2026-09-28T10:00:00Z" }];
     const { findByText, queryByLabelText, getByText } = render(<TouchLog objectType="quote" objectId="q-1" />);
     expect(await findByText("Called stores")).toBeTruthy();
@@ -150,7 +152,7 @@ describe("TouchLog", () => {
   });
 
   it("shows the Log form to a writing role", async () => {
-    window.localStorage.setItem("anvil:v3_role", "procurement");
+    installRbac("procurement");
     const { findByLabelText } = render(<TouchLog objectType="quote" objectId="q-1" />);
     expect(await findByLabelText("Touch notes")).toBeTruthy();
   });

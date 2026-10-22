@@ -173,6 +173,9 @@ import documentsUpload         from "./documents/upload.js";
 import duplicatesSearch        from "./duplicates/search.js";
 import einvoiceIndex           from "./einvoice/index.js";
 import emailInbound            from "./email/inbound.js";
+import emailSync               from "./email/sync.js";
+import emailConnections        from "./email/connections.js";
+import emailConnectCallback    from "./email/connect_callback.js";
 
 import evalCases               from "./eval/cases.js";
 import evalDashboard           from "./eval/dashboard.js";
@@ -1030,6 +1033,9 @@ const STATIC_ROUTES = {
   "/duplicates/search":             duplicatesSearch,
   "/einvoice":                      einvoiceIndex,
   "/email/inbound":                 emailInbound,
+  "/email/sync":                    emailSync,
+  "/email/connections":             emailConnections,
+  "/email/connect/callback":        emailConnectCallback,
 
   "/eval/cases":                    evalCases,
   "/eval/dashboard":                evalDashboard,

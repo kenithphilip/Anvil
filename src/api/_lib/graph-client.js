@@ -47,7 +47,7 @@ const safeAzureTenant = (t) => (AZURE_TENANT_RE.test(String(t || "")) ? String(t
 // The canonical public base URL. PUBLIC_APP_URL is what the rest of the API uses
 // (health, invoices/send, stripe, pay-link); GRAPH_REDIRECT_URI can override the
 // whole callback URL if the operator registered a different one in Azure.
-const publicBase = () => {
+export const publicBase = () => {
   const b = process.env.PUBLIC_APP_URL || process.env.APP_BASE_URL || "";
   return b ? String(b).replace(/\/+$/, "") : "";
 };
@@ -105,14 +105,17 @@ const stateKey = () => {
   return crypto.createHmac("sha256", Buffer.from(raw, "hex")).update("graph-oauth-state-v1").digest();
 };
 
-export const signState = (tenantId, ttlMs = 600_000) => {
-  const payload = { t: String(tenantId), n: crypto.randomBytes(9).toString("base64url"), e: Date.now() + ttlMs };
+// `extra` binds more claims (k = purpose, u = user, p = provider). verifyState
+// accepts a state only for the purpose it was minted for, so a mailbox state
+// cannot complete the tenant connect, and the other way round.
+export const signState = (tenantId, ttlMs = 600_000, extra = {}) => {
+  const payload = { ...extra, t: String(tenantId), n: crypto.randomBytes(9).toString("base64url"), e: Date.now() + ttlMs };
   const body = b64u(JSON.stringify(payload));
   const sig = b64u(crypto.createHmac("sha256", stateKey()).update(body).digest());
   return body + "." + sig;
 };
 
-export const verifyState = (state) => {
+export const verifyState = (state, kind = null) => {
   const parts = String(state || "").split(".");
   if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
   const expected = crypto.createHmac("sha256", stateKey()).update(parts[0]).digest();
@@ -122,11 +125,14 @@ export const verifyState = (state) => {
   let payload;
   try { payload = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8")); } catch (_e) { return null; }
   if (!payload?.t || !payload?.e || Date.now() > Number(payload.e)) return null;
-  return { tenantId: payload.t };
+  if ((payload.k || null) !== kind) return null;
+  return kind
+    ? { tenantId: payload.t, userId: payload.u || null, provider: payload.p || null }
+    : { tenantId: payload.t };
 };
 
 // ── authorize URL ────────────────────────────────────────────────────────────
-export const buildAuthorizeUrl = ({ azureTenant, clientId, redirectUri, state }) => {
+export const buildAuthorizeUrl = ({ azureTenant, clientId, redirectUri, state, scopes = SCOPES }) => {
   const t = safeAzureTenant(azureTenant);
   if (!t) { const e = new Error("invalid azure tenant id"); e.status = 400; throw e; }
   const p = new URLSearchParams({
@@ -134,7 +140,7 @@ export const buildAuthorizeUrl = ({ azureTenant, clientId, redirectUri, state })
     response_type: "code",
     redirect_uri: String(redirectUri),
     response_mode: "query",
-    scope: SCOPES.join(" "),
+    scope: scopes.join(" "),
     state: String(state),
     prompt: "select_account",
   });
@@ -164,17 +170,17 @@ const tokenRequest = async (azureTenant, params) => {
   return parsed;
 };
 
-export const exchangeCode = ({ azureTenant, clientId, clientSecret, code, redirectUri }) =>
+export const exchangeCode = ({ azureTenant, clientId, clientSecret, code, redirectUri, scopes = SCOPES }) =>
   tokenRequest(azureTenant, new URLSearchParams({
     client_id: String(clientId), client_secret: String(clientSecret),
     grant_type: "authorization_code", code: String(code),
-    redirect_uri: String(redirectUri), scope: SCOPES.join(" "),
+    redirect_uri: String(redirectUri), scope: scopes.join(" "),
   }));
 
-export const refreshTokens = ({ azureTenant, clientId, clientSecret, refreshToken }) =>
+export const refreshTokens = ({ azureTenant, clientId, clientSecret, refreshToken, scopes = SCOPES }) =>
   tokenRequest(azureTenant, new URLSearchParams({
     client_id: String(clientId), client_secret: String(clientSecret),
-    grant_type: "refresh_token", refresh_token: String(refreshToken), scope: SCOPES.join(" "),
+    grant_type: "refresh_token", refresh_token: String(refreshToken), scope: scopes.join(" "),
   }));
 
 // Return a valid access token for a tenant, refreshing + persisting when the

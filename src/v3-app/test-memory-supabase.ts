@@ -19,8 +19,8 @@
 // PostgREST does (plain columns, alias:column, and JSON paths with -> and
 // ->>), so a misspelled column reads back undefined. Embedded resources are
 // not supported and throw. Off by default, so existing tests see whole rows.
-// Also: neq, not(col, "in", "(a,b)"), not(col, "is", null), range, and
-// upsert(rows, { onConflict }).
+// Also: neq, lt, not(col, "in", "(a,b)"), not(col, "is", null), range,
+// upsert(rows, { onConflict }), and or() terms with lt, lte, gt and gte.
 
 type Row = Record<string, any>;
 
@@ -141,12 +141,17 @@ export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record
       is: (c: string, v: unknown) => { st.filters.push((r: Row) => (r[c] ?? null) === v); return b; },
       gte: (c: string, v: any) => { st.filters.push((r: Row) => r[c] >= v); return b; },
       lte: (c: string, v: any) => { st.filters.push((r: Row) => r[c] <= v); return b; },
+      lt: (c: string, v: any) => { st.filters.push((r: Row) => r[c] < v); return b; },
       or: (expr: string) => {
         const terms = expr.split(",").map((p) => {
           const [c, op, ...rest] = p.split(".");
           const val = rest.join(".");
           if (op === "is" && val === "null") return (r: Row) => (r[c] ?? null) === null;
           if (op === "eq") return (r: Row) => String(r[c]) === val;
+          if (op === "lt") return (r: Row) => r[c] != null && r[c] < val;
+          if (op === "lte") return (r: Row) => r[c] != null && r[c] <= val;
+          if (op === "gt") return (r: Row) => r[c] != null && r[c] > val;
+          if (op === "gte") return (r: Row) => r[c] != null && r[c] >= val;
           throw new Error("memory db: or(" + p + ") unsupported");
         });
         st.filters.push((r: Row) => terms.some((t) => t(r)));

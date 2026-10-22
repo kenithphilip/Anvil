@@ -505,10 +505,10 @@ the service role with an explicit tenant filter. New tables go into
 | No. | Content | PR |
 |---|---|---|
 | 252 | `work_items`: the columns of `WORK_MANAGEMENT_SCOPE.md` 4.2, without `item_key`, the template columns and `custom`. Same names and types, so WM-5 adds the rest with `add column if not exists`. Links, events, watchers, counters and the auto flag move to WM-5's own migration (next free number then) | EA-3 |
-| 267 | `mailbox_connections` (provider, kind, owner, address, scopes, `access_token_enc`, `refresh_token_enc`, `token_expires_at`, status, `checkpoint` jsonb per folder, lease, health and budget columns; unique `(tenant_id, provider, lower(address))`). `tenant_settings`: `google_oauth_client_id`, `google_oauth_client_secret_enc`, `email_accountability_enabled` (default false), `email_policy` jsonb, `email_content_retention_days` | EA-1 |
-| 268 | `email_actions` (section 6.4, `message_key` generated, unique for life), `email_rules`, function `email_action_ensure` | EA-3 |
+| 267 | `mailbox_connections` (provider, kind, owner, address, scopes, `access_token_enc`, `refresh_token_enc`, `token_expires_at`, status, `checkpoint` jsonb per folder, lease, health and budget columns; unique `(tenant_id, provider, lower(address))`). `tenant_settings`: `google_oauth_client_id`, `google_oauth_client_secret_enc`, `email_accountability_enabled` (default false) | EA-1 (#635) |
+| 268 | `email_actions` (section 6.4, `message_key` generated, unique for life), `email_rules`, function `email_action_ensure`; `tenant_settings.email_content_retention_days` | EA-3 |
 | 269 | `email_action_evidence` (unique per action and outgoing message) | EA-5 |
-| 270 | `email_action_notices` (unique per action and notice key) | EA-6 |
+| 270 | `email_action_notices` (unique per action and notice key); `tenant_settings.email_policy` jsonb | EA-6 |
 
 Registry update: 252 is now the `work_items` table only. 267 to 270 are this
 module. The next free number is 271. C-20 of `SO_EXECUTION_COHESION.md` said

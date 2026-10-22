@@ -2,8 +2,9 @@
 // the shape of outlook.js, plus one line here.
 
 import * as outlook from "./outlook.js";
+import * as gmail from "./gmail.js";
 
-const ADAPTERS = { outlook };
+const ADAPTERS = { outlook, gmail };
 
 export const PROVIDERS = Object.keys(ADAPTERS);
 export const getAdapter = (provider) => ADAPTERS[provider] || null;

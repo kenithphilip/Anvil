@@ -82,7 +82,7 @@ describe("GET /api/email/connections", () => {
     as("u1");
     const r = await callHandler(connections, { method: "GET" });
     expect(r.body.mailboxes.map((m) => m.id)).toEqual(["m1"]);
-    expect(r.body.providers).toEqual({ outlook: true });
+    expect(r.body.providers).toEqual({ outlook: true, gmail: false });
     const keys = Object.keys(r.body.mailboxes[0]);
     expect(keys).not.toContain("access_token_enc");
     expect(keys).not.toContain("refresh_token_enc");

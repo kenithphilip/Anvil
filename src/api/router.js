@@ -176,6 +176,7 @@ import emailInbound            from "./email/inbound.js";
 import emailSync               from "./email/sync.js";
 import emailConnections        from "./email/connections.js";
 import emailConnectCallback    from "./email/connect_callback.js";
+import emailGoogleApp          from "./email/google_app.js";
 
 import evalCases               from "./eval/cases.js";
 import evalDashboard           from "./eval/dashboard.js";
@@ -1036,6 +1037,7 @@ const STATIC_ROUTES = {
   "/email/sync":                    emailSync,
   "/email/connections":             emailConnections,
   "/email/connect/callback":        emailConnectCallback,
+  "/email/google_app":              emailGoogleApp,
 
   "/eval/cases":                    evalCases,
   "/eval/dashboard":                evalDashboard,

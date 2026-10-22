@@ -29,6 +29,7 @@ import tallyReconcileCron from "./tally-reconcile.js";
 import extractionJobsCron from "./extraction_jobs.js";
 import driftMeterCron     from "./drift-meter.js";
 import logisticsMonitorTick from "./logistics-monitor-tick.js";
+import emailSync from "../email/sync.js";
 import sapSync          from "../sap/sync.js";
 import sapRetry         from "../sap/retry.js";
 import d365Sync         from "../d365/sync.js";
@@ -185,6 +186,9 @@ export default async function handler(req, res) {
       // Logistics monitor: detect delay/SLA exceptions + escalate. Gated to
       // tenants with logistics_monitor_enabled (none by default); idempotent.
       { name: "logistics/monitor",    fn: logisticsMonitorTick, opts: { path: "/api/cron/logistics-monitor-tick" } },
+      // Email accountability: poll the connected mailboxes that are due. Gated to
+      // tenants with email_accountability_enabled (none by default).
+      { name: "email/sync",           fn: emailSync,    opts: { path: "/api/email/sync" } },
       ...RETRIES,
     ];
     const groupAlways = await runCronGroup(alwaysGroup);

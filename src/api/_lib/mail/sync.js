@@ -127,7 +127,8 @@ export const syncConnection = async (svc, conn, { adapter, settings, now = new D
           folder, sinceIso: since, pageSize: adapter.pageSize || PAGE_SIZE, address: conn.address,
         }, run);
         const messages = [...res.messages].sort(inFirst);
-        if (onPage) await onPage(messages, { folder, connection: conn });
+        const counts = onPage ? await onPage(messages, { folder, connection: conn }) : null;
+        for (const [k, v] of Object.entries(counts || {})) stats[k] = (stats[k] || 0) + v;
         checkpoint[folder] = res.checkpoint;
         stats.pages += 1;
         for (const m of messages) stats[m.direction === "in" ? "inbound" : "outbound"] += 1;

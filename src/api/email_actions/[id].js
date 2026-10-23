@@ -1,7 +1,7 @@
 // /api/email_actions/<id>: one email action.
 // docs/EMAIL_ACCOUNTABILITY_SCOPE.md 6.5, 6.8 and 6.10.
 //
-//   GET    the action, and its history (audit_events).
+//   GET    the action, its evidence, and its history (audit_events).
 //   PATCH  { version, ...one or more changes }:
 //            status            a move from store.TRANSITIONS. "performed" needs
 //                              evidence (EA-5); cancel and reopen need a reason.
@@ -14,6 +14,9 @@
 //            business_status   the business outcome. The verifier never sets
 //                              resolved or closed; a person does, here.
 //            due_at            a manual due time, with a reason.
+//            forward_to        the addresses a forward must reach (up to 10).
+//                              shortcut: addresses only; a role target needs
+//                              an "any member" rule in verify.js first.
 //          version is work_items.version; a stale one is 409.
 //
 // Every change writes audit_events with the before and after values.
@@ -23,6 +26,7 @@ import { resolveContext, requirePermission, hasAction } from "../_lib/auth.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { recordAudit } from "../_lib/audit.js";
 import { resolveAssignee } from "../_lib/assignee.js";
+import { isEmailAddress } from "../_lib/internal-recipients.js";
 import { loadAction } from "../_lib/email-accountability/access.js";
 import { TRANSITIONS, STATUS_CATEGORY, isReopen } from "../_lib/email-accountability/store.js";
 import { ACTION_TYPES, REQUIREMENT_BY_TYPE, PRIORITY_RANK } from "../_lib/email-accountability/rules.js";
@@ -48,7 +52,11 @@ export default async function handler(req, res) {
         .eq("tenant_id", ctx.tenantId).eq("object_type", "email_action").eq("object_id", id)
         .order("created_at", { ascending: true });
       if (h.error) throw new Error("history: " + h.error.message);
-      return json(res, 200, { ok: true, action: found.row, history: h.data || [] });
+      const ev = await svc.from("email_action_evidence")
+        .select("id, kind, method, status, confidence, reasons, sent_at, sender, recipients, has_attachments, web_link, note, reference, recorded_by, decided_by, decided_at, decision_reason, created_at")
+        .eq("tenant_id", ctx.tenantId).eq("email_action_id", id).order("created_at", { ascending: true });
+      if (ev.error) throw new Error("evidence: " + ev.error.message);
+      return json(res, 200, { ok: true, action: found.row, evidence: ev.data || [], history: h.data || [] });
     }
     if (req.method !== "PATCH") return bad(res, 405, "method not allowed");
 
@@ -122,6 +130,13 @@ export default async function handler(req, res) {
       if (!reason) return bad(res, 400, "a reason is required to change the due time");
       Object.assign(work, { due_at: new Date(t).toISOString(), due_source: "manual", due_basis: { set_by: ctx.user.id } });
       audits.push({ action: "email_action_due_changed", before: { due_at: wi.due_at }, after: { due_at: new Date(t).toISOString() } });
+    }
+
+    if (b.forward_to !== undefined) {
+      const list = Array.isArray(b.forward_to) ? b.forward_to.map((x) => String(x).trim().toLowerCase()) : null;
+      if (!list || list.length > 10 || !list.every(isEmailAddress)) return bad(res, 400, "forward_to must be a list of up to 10 addresses");
+      email.forward_to = [...new Set(list)];
+      audits.push({ action: "email_action_forward_target", before: { forward_to: ea.forward_to || [] }, after: { forward_to: email.forward_to } });
     }
 
     if (!audits.length) return bad(res, 400, "nothing to change");

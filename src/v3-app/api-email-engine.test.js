@@ -3,12 +3,11 @@
 // [4] reliable customer and sales order links, [9] reading does not complete,
 // [18] existing task and sales order data unchanged.
 //
-// The memory fake has no SQL functions, so stand-in() below plays
-// email_action_ensure with the semantics checked on a real Postgres engine
-// (PGlite; see the PR): unique for life on (tenant, message key, action type),
-// a second mailbox is recorded in seen_connection_ids.
+// The memory fake has no SQL functions; test-email-ensure.js plays
+// email_action_ensure with the semantics checked on a real Postgres engine.
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { createMemoryDb } from "./test-memory-supabase";
+import { withEnsure } from "./test-email-ensure";
 
 const H = vi.hoisted(() => {
   process.env.ANVIL_SECRETS_KEY = "d".repeat(64);
@@ -25,33 +24,6 @@ beforeAll(async () => {
 });
 
 const NOW = new Date("2026-10-22T06:30:00Z");
-
-const standIn = (db) => () => {
-  const svc = db.svc();
-  svc.rpc = async (name, { p_item, p_action }) => {
-    if (name !== "email_action_ensure") return { data: null, error: { message: "unknown function " + name } };
-    const key = p_action.internet_message_id || p_action.provider + ":" + p_action.provider_message_id;
-    const rows = db.tables.email_actions;
-    const hit = rows.find((r) => r.tenant_id === p_action.tenant_id && r.message_key === key && r.action_type === p_action.action_type);
-    if (hit) {
-      if (p_action.connection_id && !hit.seen_connection_ids.includes(p_action.connection_id)) hit.seen_connection_ids.push(p_action.connection_id);
-      return { data: [{ out_action_id: hit.id, out_item_id: hit.work_item_id, out_created: false }], error: null };
-    }
-    const id = "ea-" + (rows.length + 1);
-    const itemId = "wi-" + (db.tables.work_items.length + 1);
-    rows.push({
-      business_status: "not_assessed", escalation_level: 0, reopen_count: 0, ...p_action,
-      id, message_key: key, work_item_id: itemId,
-      seen_connection_ids: p_action.connection_id ? [p_action.connection_id] : [],
-    });
-    db.tables.work_items.push({
-      ...p_item, id: itemId, tenant_id: p_action.tenant_id, type: "task", subject_type: "email_action",
-      subject_id: id, source: "event", source_key: "email_action:" + id, priority: p_item.priority ?? 3,
-    });
-    return { data: [{ out_action_id: id, out_item_id: itemId, out_created: true }], error: null };
-  };
-  return svc;
-};
 
 const mailbox = (id, owner, address) => ({ id, tenant_id: "t1", provider: "outlook", owner_user_id: owner, address, status: "active" });
 const M1 = mailbox("m1", "u1", "rep@seller.example");
@@ -87,7 +59,7 @@ const seed = async ({ mode = "create", rules = [], members = ["u1", "u2", "u3"] 
     communications: [],
     quote_approvals: [],
   });
-  H.svc = standIn(H.db);
+  H.svc = withEnsure(H.db);
 };
 
 const msg = (id, extra = {}) => ({

@@ -65,8 +65,11 @@ const DEFAULT_TABLES = new Set([
   "order_term_checks",
   "order_term_flags",
   "order_term_decisions",
-  // Email accountability (migration 267).
+  // Email accountability (migrations 252, 267, 268).
   "mailbox_connections",
+  "work_items",
+  "email_actions",
+  "email_rules",
 ]);
 
 // Allow-list. Each entry is { file: substring, line: number,

@@ -19,7 +19,7 @@
 // PostgREST does (plain columns, alias:column, and JSON paths with -> and
 // ->>), so a misspelled column reads back undefined. Embedded resources are
 // not supported and throw. Off by default, so existing tests see whole rows.
-// Also: neq, lt, not(col, "in", "(a,b)"), not(col, "is", null), range,
+// Also: neq, lt, ilike, not(col, "in", "(a,b)"), not(col, "is", null), range,
 // upsert(rows, { onConflict }), and or() terms with lt, lte, gt and gte.
 
 type Row = Record<string, any>;
@@ -142,6 +142,20 @@ export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record
       gte: (c: string, v: any) => { st.filters.push((r: Row) => r[c] >= v); return b; },
       lte: (c: string, v: any) => { st.filters.push((r: Row) => r[c] <= v); return b; },
       lt: (c: string, v: any) => { st.filters.push((r: Row) => r[c] < v); return b; },
+      // Postgres ILIKE: % any run, _ one character, a backslash escapes either.
+      ilike: (c: string, pattern: string) => {
+        let re = "";
+        for (let i = 0; i < pattern.length; i++) {
+          const ch = pattern[i];
+          if (ch === "\\" && i + 1 < pattern.length) { re += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); continue; }
+          if (ch === "%") re += ".*";
+          else if (ch === "_") re += ".";
+          else re += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        }
+        const rx = new RegExp("^" + re + "$", "is");
+        st.filters.push((r: Row) => r[c] != null && rx.test(String(r[c])));
+        return b;
+      },
       or: (expr: string) => {
         const terms = expr.split(",").map((p) => {
           const [c, op, ...rest] = p.split(".");

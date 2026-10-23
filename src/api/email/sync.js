@@ -10,12 +10,14 @@
 // lease so two overlapping ticks never sync one mailbox twice. One request at
 // a time. The run stops claiming 3 s before its deadline.
 //
-// EA-1 counts messages only (onPage is a no-op). EA-3 plugs in the engine.
+// The engine (email-accountability/engine.js) turns inbound mail into
+// actions; in 'observe' mode it only counts what it would make.
 
 import { applyCors, handlePreflight, json, sendError } from "../_lib/cors.js";
 import { serviceClient } from "../_lib/supabase.js";
 import { getAdapter } from "../_lib/mail/adapters.js";
 import { syncConnection } from "../_lib/mail/sync.js";
+import { makeEngine } from "../_lib/email-accountability/engine.js";
 
 export const MAX_MAILBOXES_PER_RUN = 8;
 const RUN_BUDGET_MS = 15_000;
@@ -70,7 +72,8 @@ export default async function handler(req, res) {
   const provided = (req.headers?.authorization || "").replace(/^Bearer\s+/i, "");
   if (!secret || provided !== secret) return json(res, 401, { error: { message: "email sync is cron-only" } });
   try {
-    return json(res, 200, { ok: true, ...(await runEmailSync(serviceClient())) });
+    const svc = serviceClient();
+    return json(res, 200, { ok: true, ...(await runEmailSync(svc, { onPage: makeEngine(svc) })) });
   } catch (err) {
     return sendError(res, err);
   }

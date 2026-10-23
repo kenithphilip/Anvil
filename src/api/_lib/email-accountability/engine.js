@@ -26,10 +26,10 @@ import {
   candidatesForSent, recordOutgoingEvidence, applyVerification,
 } from "./store.js";
 import { judge } from "./verify.js";
+import { tenantPolicy, policyFor } from "./policy.js";
 import { resolveAssignee } from "../assignee.js";
 import { recordAudit } from "../audit.js";
 
-export const DEFAULT_TIMEZONE = "Asia/Kolkata";
 
 export const messageKey = (m) => m.internetMessageId || m.provider + ":" + m.providerId;
 
@@ -37,13 +37,15 @@ const domainOf = (a) => String(a || "").split("@")[1] || "";
 const systemCtx = (tenantId) => ({ tenantId, user: null, role: "system" });
 
 // Per run and tenant: the company's own mail domains (the connected
-// mailboxes, never a free-mail domain) and the active rules.
+// mailboxes, never a free-mail domain), the active rules and the policy.
+// tenant_settings is read whole, so a column a migration has not added yet
+// reads as missing instead of failing the sync.
 const loadTenant = async (svc, tenantId) => {
   const [mailboxes, rules, settings] = await Promise.all([
     svc.from("mailbox_connections").select("address").eq("tenant_id", tenantId),
     svc.from("email_rules").select("id, scope_user_id, kind, pattern, effect")
       .eq("tenant_id", tenantId).eq("active", true),
-    svc.from("tenant_settings").select("email_actions_mode").eq("tenant_id", tenantId).maybeSingle(),
+    svc.from("tenant_settings").select("*").eq("tenant_id", tenantId).maybeSingle(),
   ]);
   for (const r of [mailboxes, rules, settings]) if (r.error) throw new Error("engine tenant: " + r.error.message);
   const tenantDomains = new Set((mailboxes.data || []).map((m) => domainOf(m.address).toLowerCase())
@@ -52,6 +54,7 @@ const loadTenant = async (svc, tenantId) => {
     tenantDomains,
     rules: rules.data || [],
     mode: settings.data?.email_actions_mode === "create" ? "create" : "observe",
+    policy: tenantPolicy(settings.data?.email_policy),
     members: new Map(),
   };
 };
@@ -104,7 +107,7 @@ const preferToRecipient = async (svc, tenantId, actionId, m, conn) => {
   return true;
 };
 
-const processInbound = async (svc, m, conn, t, { now, timezone }, counts) => {
+const processInbound = async (svc, m, conn, t, { now }, counts) => {
   const tenantId = conn.tenant_id;
   const rules = t.rules.filter((r) => !r.scope_user_id || r.scope_user_id === conn.owner_user_id);
   if (exclusionOf(m, { tenantDomains: t.tenantDomains, rules })) { counts.excluded += 1; return; }
@@ -114,8 +117,11 @@ const processInbound = async (svc, m, conn, t, { now, timezone }, counts) => {
   const order = link.reliable ? await linkOrder(svc, tenantId, link.customer_id, text) : null;
   const key = messageKey(m);
   const open = await openActionsInThread(svc, tenantId, m, key);
+  const timezone = t.policy.timezone;
   const result = classify(m, {
     now, timezone, tenantDomains: t.tenantDomains, rules, link, order,
+    businessHours: t.policy.business_hours,
+    dueMinutesFor: (type, priority) => policyFor(t.policy, { priority, action_type: type, mailbox_id: conn.id }).due_minutes?.[priority],
     openTypesInThread: new Set(open.map((a) => a.action_type)),
   });
   if (!result.relevant) { counts.irrelevant += 1; return; }
@@ -206,7 +212,7 @@ const processOutbound = async (svc, m, conn, t, counts) => {
 };
 
 // onPage for syncConnection. One engine per sync run; it caches per tenant.
-export const makeEngine = (svc, { now = () => new Date(), timezone = DEFAULT_TIMEZONE } = {}) => {
+export const makeEngine = (svc, { now = () => new Date() } = {}) => {
   const tenants = new Map();
   return async (messages, { connection }) => {
     if (!tenants.has(connection.tenant_id)) tenants.set(connection.tenant_id, await loadTenant(svc, connection.tenant_id));
@@ -218,7 +224,7 @@ export const makeEngine = (svc, { now = () => new Date(), timezone = DEFAULT_TIM
     // The runner sorts each page inbound first, so a reply in the same page
     // finds the action it answers.
     for (const m of messages) {
-      if (m.direction === "in") await processInbound(svc, m, connection, t, { now: now(), timezone }, counts);
+      if (m.direction === "in") await processInbound(svc, m, connection, t, { now: now() }, counts);
       else await processOutbound(svc, m, connection, t, counts);
     }
     return counts;

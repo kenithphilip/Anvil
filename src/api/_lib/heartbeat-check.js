@@ -46,6 +46,9 @@ export const CRON_EXPECTED_MAX_AGE_MS = {
   // up as a stale "cron/tick", so the signal is not lost either way.
   "logistics/monitor_daily": 30 * 60 * 60 * 1000,
   "logistics-monitor-tick":  30 * 60 * 60 * 1000,
+  // The email sweep's daily backstop row (cron/daily.js). "email/sweep" in
+  // the tick keeps the 10-minute default.
+  "email/sweep_daily":       30 * 60 * 60 * 1000,
   default:                10 * 60 * 1000,
 };
 

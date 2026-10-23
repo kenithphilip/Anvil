@@ -30,6 +30,7 @@ import extractionJobsCron from "./extraction_jobs.js";
 import driftMeterCron     from "./drift-meter.js";
 import logisticsMonitorTick from "./logistics-monitor-tick.js";
 import emailSync from "../email/sync.js";
+import emailSweep from "../email/sweep.js";
 import sapSync          from "../sap/sync.js";
 import sapRetry         from "../sap/retry.js";
 import d365Sync         from "../d365/sync.js";
@@ -189,6 +190,8 @@ export default async function handler(req, res) {
       // Email accountability: poll the connected mailboxes that are due. Gated to
       // tenants with email_accountability_enabled (none by default).
       { name: "email/sync",           fn: emailSync,    opts: { path: "/api/email/sync" } },
+      // Email accountability: reminders and escalation, idempotent by ledger.
+      { name: "email/sweep",          fn: emailSweep,   opts: { path: "/api/email/sweep" } },
       ...RETRIES,
     ];
     const groupAlways = await runCronGroup(alwaysGroup);

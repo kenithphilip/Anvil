@@ -71,6 +71,7 @@ const DEFAULT_TABLES = new Set([
   "email_actions",
   "email_rules",
   "email_action_evidence",
+  "email_action_notices",
 ]);
 
 // Allow-list. Each entry is { file: substring, line: number,

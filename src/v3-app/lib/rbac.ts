@@ -163,6 +163,11 @@ export const ACTIONS: Record<string, Role[]> = {
   "admin.change_role":    ["admin"],
   "security.edit_redaction":["admin"],
   "security.run_test":    ["admin"],
+  // Email accountability. Mirrors auth.js SERVER_ACTIONS; the server enforces.
+  "email.view_all":       ["sales_manager", "admin"],
+  "email.reassign":       ["sales_manager", "admin"],
+  "email.verify":         ["sales_manager", "admin"],
+  "email.rules":          ["admin"],
 };
 
 // Role is persisted under the `anvil:` prefix; legacy `obara:`

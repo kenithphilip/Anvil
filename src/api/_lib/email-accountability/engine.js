@@ -14,11 +14,18 @@
 //   - A database error throws, so the page is not marked done and the next
 //     run tries again.
 //
-// EA-5 adds the outbound side (reply and forward verification).
+// Outbound: each sent message is checked against the open actions it may
+// answer (verify.js). Evidence is one row per action and message; a verified
+// reply performs the action, an ambiguous one sends it to a person, and mail
+// never completes an action that needs a person.
 
 import { classify, exclusionOf, PRIORITY_RANK } from "./rules.js";
 import { linkSender, linkOrder, FREE_MAIL_DOMAINS } from "./link.js";
-import { ensureAction, openActionsInThread, touchFollowUp, STATUS_CATEGORY } from "./store.js";
+import {
+  ensureAction, openActionsInThread, touchFollowUp, STATUS_CATEGORY,
+  candidatesForSent, recordOutgoingEvidence, applyVerification,
+} from "./store.js";
+import { judge } from "./verify.js";
 import { resolveAssignee } from "../assignee.js";
 import { recordAudit } from "../audit.js";
 
@@ -172,15 +179,47 @@ const processInbound = async (svc, m, conn, t, { now, timezone }, counts) => {
   }
 };
 
+const processOutbound = async (svc, m, conn, t, counts) => {
+  const tenantId = conn.tenant_id;
+  for (const a of await candidatesForSent(svc, tenantId, m)) {
+    const j = judge(m, a, { sendingConnectionId: conn.id });
+    if (!j) continue;
+    if (t.mode !== "create") {
+      if (j.status === "verified") counts.would_verify += 1;
+      continue;
+    }
+    const ev = await recordOutgoingEvidence(svc, tenantId, a, m, conn, j);
+    if (!ev.inserted) continue;
+    counts["evidence_" + j.status] += 1;
+    if (!j.state) continue;
+    const moved = await applyVerification(svc, tenantId, a, j.state, {
+      at: m.sentAt || new Date().toISOString(), by: conn.owner_user_id, resolution: "verified",
+    });
+    if (!moved) continue;
+    counts[j.state === "performed" ? "verified" : "to_verification"] += 1;
+    await recordAudit(systemCtx(tenantId), {
+      action: j.state === "performed" ? "email_action_verified" : "email_action_needs_verification",
+      objectType: "email_action", objectId: a.id,
+      before: { status: a.item.status }, after: { status: j.state, evidence_id: ev.id, method: j.method },
+    });
+  }
+};
+
 // onPage for syncConnection. One engine per sync run; it caches per tenant.
 export const makeEngine = (svc, { now = () => new Date(), timezone = DEFAULT_TIMEZONE } = {}) => {
   const tenants = new Map();
   return async (messages, { connection }) => {
     if (!tenants.has(connection.tenant_id)) tenants.set(connection.tenant_id, await loadTenant(svc, connection.tenant_id));
     const t = tenants.get(connection.tenant_id);
-    const counts = { created: 0, would_create: 0, excluded: 0, irrelevant: 0, follow_ups: 0, seen_again: 0, reassigned: 0 };
+    const counts = {
+      created: 0, would_create: 0, excluded: 0, irrelevant: 0, follow_ups: 0, seen_again: 0, reassigned: 0,
+      would_verify: 0, verified: 0, to_verification: 0, evidence_verified: 0, evidence_ambiguous: 0, evidence_rejected: 0,
+    };
+    // The runner sorts each page inbound first, so a reply in the same page
+    // finds the action it answers.
     for (const m of messages) {
       if (m.direction === "in") await processInbound(svc, m, connection, t, { now: now(), timezone }, counts);
+      else await processOutbound(svc, m, connection, t, counts);
     }
     return counts;
   };

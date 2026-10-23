@@ -45,7 +45,9 @@ export const DEFAULT_PHRASES = [
     re: /\b(approval (is )?required|please approve|awaiting (your )?approval|need(s)? (your )?approval|for your approval)\b/i },
   { code: "document_pending", action: "provide_documents", priority: "high", risk: "operational",
     re: /\b(documents? (is |are )?pending|pending documents?|send (the |us |me )?(certificates?|invoice copy|documents?|drawings?|test reports?|coc|mtc)|share (the )?(certificates?|documents?|drawings?|test reports?))\b/i },
-  { code: "shipment_delay", action: "investigate", priority: "high", risk: "operational",
+  // ack: the customer also needs an answer now. The reply completes when it is
+  // sent; the investigation stays open (plan 6.5).
+  { code: "shipment_delay", action: "investigate", ack: true, priority: "high", risk: "operational",
     re: /\b((shipment|delivery|dispatch) (is |has been )?delay(ed)?|delayed (shipment|delivery|dispatch)|not (yet )?received|short (shipment|supply|delivery))\b/i },
   { code: "deadline", action: "reply", priority: "high", risk: "service", criticalWithKnown: true,
     re: /\b(deadline|by end of (the )?day|by eod|urgent(ly)?|asap|immediately)\b/i },
@@ -216,7 +218,8 @@ export const classify = (m, ctx) => {
   if (!relevant) return { relevant: false, excluded: null, reasons, actions: [] };
   reasons.push(inferred("priority", "Priority " + priority + (review ? "; the sender is not a known contact, so a person reviews it first" : "") + "."));
 
-  const types = [...new Set(hits.sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]).map((h) => h.action))];
+  const types = [...new Set(hits.sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority])
+    .flatMap((h) => (h.ack ? [h.action, "reply"] : [h.action])))];
   const open = ctx.openTypesInThread || new Set();
   const followUpTypes = types.filter((t) => open.has(t));
   const actions = types.filter((t) => !open.has(t)).slice(0, 3).map((type) => {

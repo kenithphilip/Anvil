@@ -84,3 +84,86 @@ export const touchFollowUp = async (svc, tenantId, action, priorityRank, now) =>
   }
   return false;
 };
+
+// States the verifier may move from. It never revives a performed or
+// cancelled action.
+const VERIFY_FROM = {
+  performed: ["detected", "awaiting_review", "pending", "in_progress", "awaiting_verification"],
+  awaiting_verification: ["detected", "awaiting_review", "pending", "in_progress"],
+};
+
+// The not-closed actions a sent message may answer: named in its In-Reply-To
+// or References, or in its conversation. With their work item state.
+export const candidatesForSent = async (svc, tenantId, m) => {
+  const ids = [...new Set([m.inReplyTo, ...(m.references || [])].filter(Boolean))];
+  const reads = [];
+  if (ids.length) reads.push(svc.from("email_actions").select("*").eq("tenant_id", tenantId).in("internet_message_id", ids).limit(50));
+  if (m.conversationId) reads.push(svc.from("email_actions").select("*").eq("tenant_id", tenantId).eq("conversation_id", m.conversationId).limit(50));
+  const byId = new Map();
+  for (const r of await Promise.all(reads)) {
+    if (r.error) throw new Error("sent candidates: " + r.error.message);
+    for (const row of r.data || []) if (row.work_item_id) byId.set(row.id, row);
+  }
+  if (!byId.size) return [];
+  const items = await svc.from("work_items").select("id, status, status_category, version, assignee_user_id")
+    .eq("tenant_id", tenantId).in("id", [...byId.values()].map((a) => a.work_item_id))
+    .in("status_category", OPEN_CATEGORIES);
+  if (items.error) throw new Error("sent candidates: " + items.error.message);
+  const open = new Map((items.data || []).map((w) => [w.id, w]));
+  return [...byId.values()].filter((a) => open.has(a.work_item_id)).map((a) => ({ ...a, item: open.get(a.work_item_id) }));
+};
+
+// One evidence row per action and outgoing message. Returns { inserted, id }.
+export const recordOutgoingEvidence = async (svc, tenantId, action, m, conn, j) => {
+  let q = svc.from("email_action_evidence").select("id").eq("tenant_id", tenantId)
+    .eq("email_action_id", action.id).eq("kind", "outgoing");
+  q = m.internetMessageId ? q.eq("internet_message_id", m.internetMessageId) : q.eq("provider_message_id", m.providerId);
+  const prior = await q.limit(1);
+  if (prior.error) throw new Error("evidence read: " + prior.error.message);
+  if ((prior.data || []).length) return { inserted: false, id: prior.data[0].id };
+  const ins = await svc.from("email_action_evidence").insert({
+    tenant_id: tenantId, email_action_id: action.id, kind: "outgoing", connection_id: conn.id,
+    provider: m.provider, provider_message_id: m.providerId, internet_message_id: m.internetMessageId || null,
+    sent_at: m.sentAt, sender: m.from, recipients: [...(m.to || []), ...(m.cc || [])],
+    has_attachments: !!m.hasAttachments, web_link: m.webLink || null,
+    method: j.method, status: j.status, confidence: j.confidence, reasons: j.reasons,
+  }).select("id");
+  if (ins.error) {
+    if (ins.error.code === "23505") return { inserted: false, id: null };
+    throw new Error("evidence insert: " + ins.error.message);
+  }
+  return { inserted: true, id: ins.data?.[0]?.id || null };
+};
+
+// Move the work item to performed or awaiting_verification, guarded by its
+// version and by the states it may move from. Performed also moves the
+// business outcome from awaiting_internal to awaiting_external: the reply is
+// done, the matter is not resolved. Returns true when the state changed.
+export const applyVerification = async (svc, tenantId, action, to, { at, by, resolution }) => {
+  let item = action.item;
+  let patch = null;
+  // A person may edit the item between the read and this write; read it
+  // again and try once more.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt) {
+      const r = await svc.from("work_items").select("id, status, version").eq("tenant_id", tenantId).eq("id", item.id).maybeSingle();
+      if (r.error) throw new Error("verify state: " + r.error.message);
+      if (!r.data) return false;
+      item = r.data;
+    }
+    if (!VERIFY_FROM[to]?.includes(item.status)) return false;
+    patch = { status: to, status_category: STATUS_CATEGORY[to], version: item.version + 1, updated_at: new Date().toISOString() };
+    if (to === "performed") Object.assign(patch, { completed_at: at, completed_by: by || null, resolution });
+    const w = await svc.from("work_items").update(patch)
+      .eq("tenant_id", tenantId).eq("id", item.id).eq("version", item.version).select("id");
+    if (w.error) throw new Error("verify state: " + w.error.message);
+    if (w.data?.length) break;
+    if (attempt) return false;
+  }
+  if (to === "performed" && ["awaiting_internal", "not_assessed"].includes(action.business_status)) {
+    const e = await svc.from("email_actions").update({ business_status: "awaiting_external", updated_at: patch.updated_at })
+      .eq("tenant_id", tenantId).eq("id", action.id);
+    if (e.error) throw new Error("business status: " + e.error.message);
+  }
+  return true;
+};

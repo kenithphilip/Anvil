@@ -179,6 +179,8 @@ import emailConnectCallback    from "./email/connect_callback.js";
 import emailGoogleApp          from "./email/google_app.js";
 import emailActionsIndex       from "./email_actions/index.js";
 import emailActionsById        from "./email_actions/[id].js";
+import emailActionsEvidence    from "./email_actions/evidence.js";
+import emailActionsVerify      from "./email_actions/verify.js";
 import emailRules              from "./email_rules/index.js";
 
 import evalCases               from "./eval/cases.js";
@@ -1192,6 +1194,10 @@ const STATIC_ROUTES = {
 // asserts against /orders/abc/extra; that test still passes
 // because no SUFFIX entry exists for /orders.
 const DYNAMIC_ROUTES = [
+  // "/email_actions/<id>/evidence" and "/verify" -> the manual path. Before
+  // the bare "/email_actions/<id>" so the suffix wins.
+  { prefix: "/email_actions/", suffix: "/evidence", handler: emailActionsEvidence, param: "id" },
+  { prefix: "/email_actions/", suffix: "/verify", handler: emailActionsVerify, param: "id" },
   // "/email_actions/<id>" -> one email action (GET, PATCH).
   { prefix: "/email_actions/", handler: emailActionsById, param: "id" },
   // "/documents/<id>/evidence" -> per-document OCR bbox readback.

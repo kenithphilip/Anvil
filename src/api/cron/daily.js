@@ -47,6 +47,7 @@ import evalReplay       from "../eval/replay.js";
 // object) and notifications track detail.notified — so running it on both paths
 // costs a no-op, and no tenant has it on unless logistics_monitor_enabled.
 import logisticsMonitor from "./logistics-monitor-tick.js";
+import emailSweep       from "../email/sweep.js";
 // The nightly forecast snapshot. /api/forecast's own header says the dashboard
 // "reads from the nightly forecast_snapshots table" — but nothing scheduled it,
 // so the table only advanced when an admin clicked, and the cockpit's weighted
@@ -89,6 +90,10 @@ export default async function handler(req, res) {
       // every 24h and holding /api/_healthz at 503. Worse, it would also mask a
       // dead external trigger by making the 5-min row look freshly written.
       { name: "logistics/monitor_daily", fn: logisticsMonitor, opts: { path: "/api/cron/logistics-monitor-tick" } },
+      // Daily backstop for the email reminder sweep, under its own name for the
+      // same reason as logistics/monitor_daily. The ledger makes a second run
+      // in one day send nothing new.
+      { name: "email/sweep_daily", fn: emailSweep, opts: { path: "/api/email/sweep" } },
       // CM P4: live-model replay — opt-in via EVAL_REPLAY_ENABLED. Wide timeout
       // because each golden case re-runs the model; the handler caps case count.
       ...(process.env.EVAL_REPLAY_ENABLED

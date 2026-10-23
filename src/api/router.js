@@ -177,6 +177,8 @@ import emailSync               from "./email/sync.js";
 import emailConnections        from "./email/connections.js";
 import emailConnectCallback    from "./email/connect_callback.js";
 import emailGoogleApp          from "./email/google_app.js";
+import emailSweep              from "./email/sweep.js";
+import emailPolicy             from "./email/policy.js";
 import emailActionsIndex       from "./email_actions/index.js";
 import emailActionsById        from "./email_actions/[id].js";
 import emailActionsEvidence    from "./email_actions/evidence.js";
@@ -1043,6 +1045,8 @@ const STATIC_ROUTES = {
   "/email/connections":             emailConnections,
   "/email/connect/callback":        emailConnectCallback,
   "/email/google_app":              emailGoogleApp,
+  "/email/sweep":                   emailSweep,
+  "/email/policy":                  emailPolicy,
   "/email_actions":                 emailActionsIndex,
   "/email_rules":                   emailRules,
 

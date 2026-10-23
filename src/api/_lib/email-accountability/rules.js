@@ -8,7 +8,7 @@
 // The phrase pack is the default; tenant and user rules (email_rules) add
 // keywords, trusted senders, exclusions, customer floors and due times.
 
-import { addBusinessMinutes, closeOfBusiness, localYmd, BUSINESS_DAY_MINUTES } from "./business-time.js";
+import { addBusinessMinutes, closeOfBusiness, localYmd, dayMinutes, BUSINESS_HOURS, BUSINESS_DAY_MINUTES } from "./business-time.js";
 import { parsePoDate } from "../parse-date.js";
 
 export const PRIORITY_RANK = { critical: 1, high: 2, normal: 3, informational: 4 };
@@ -102,15 +102,15 @@ const LEAD = "(?:by|before|on or before|latest by|no later than|due (?:on|by)?)\
 const MON = "(jan|feb|mar|apr|may|jun|jul|aug|sept|sep|oct|nov|dec)[a-z]*\\.?";
 
 // The first deadline the text states, as { at, text }, or null.
-export const statedDeadline = (text, now, tz) => {
+export const statedDeadline = (text, now, tz, hours = BUSINESS_HOURS) => {
   const s = String(text || "");
   let m = s.match(new RegExp("\\b" + LEAD + "(today|tonight|eod|end of (?:the )?day|tomorrow)\\b", "i"));
   if (m) {
     const ymd = localYmd(m[1].toLowerCase() === "tomorrow" ? new Date(now.getTime() + 86_400_000) : now, tz);
-    return { at: closeOfBusiness(ymd, tz), text: m[0] };
+    return { at: closeOfBusiness(ymd, tz, hours), text: m[0] };
   }
   m = s.match(/\bwithin\s+(\d{1,2})\s+(?:business |working )?days?\b/i);
-  if (m) return { at: addBusinessMinutes(now, Number(m[1]) * BUSINESS_DAY_MINUTES, tz), text: m[0] };
+  if (m) return { at: addBusinessMinutes(now, Number(m[1]) * dayMinutes(hours), tz, hours), text: m[0] };
   m = s.match(/\bwithin\s+(\d{1,2})\s+hours?\b/i);
   if (m) return { at: new Date(now.getTime() + Number(m[1]) * 3_600_000), text: m[0] };
 
@@ -127,32 +127,34 @@ export const statedDeadline = (text, now, tz) => {
   m = s.match(new RegExp("\\b" + LEAD + "(\\d{1,2})(?:st|nd|rd|th)?\\s+" + MON + "(?:,?\\s+(\\d{4}))?", "i"));
   if (m) {
     const ymd = ymdFor(Number(m[1]), MONTHS[m[2].toLowerCase()], m[3]);
-    if (ymd) return { at: closeOfBusiness(ymd, tz), text: m[0] };
+    if (ymd) return { at: closeOfBusiness(ymd, tz, hours), text: m[0] };
   }
   m = s.match(new RegExp("\\b" + LEAD + MON + "\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?", "i"));
   if (m) {
     const ymd = ymdFor(Number(m[2]), MONTHS[m[1].toLowerCase()], m[3]);
-    if (ymd) return { at: closeOfBusiness(ymd, tz), text: m[0] };
+    if (ymd) return { at: closeOfBusiness(ymd, tz, hours), text: m[0] };
   }
   m = s.match(new RegExp("\\b" + LEAD + "(\\d{1,2})[/.-](\\d{1,2})[/.-](\\d{2,4})\\b", "i"));
   if (m) {
     const ymd = parsePoDate(m[1] + "/" + m[2] + "/" + m[3], { hint: "DMY" });
-    if (ymd) return { at: closeOfBusiness(ymd, tz), text: m[0] };
+    if (ymd) return { at: closeOfBusiness(ymd, tz, hours), text: m[0] };
   }
   return null;
 };
 
-// Policy minutes for a priority when no deadline is stated. EA-6 makes these
-// a tenant setting; a deadline rule overrides them per action type today.
+// Policy minutes for a priority when no deadline is stated: the tenant policy
+// (ctx.dueMinutesFor, by priority and action type), else these defaults. A
+// deadline rule overrides both.
 export const DEFAULT_DUE_MINUTES = { critical: 240, high: BUSINESS_DAY_MINUTES, normal: 2 * BUSINESS_DAY_MINUTES };
 
 const dueFor = (type, priority, stated, ctx) => {
   if (stated) return { at: stated.at, source: "customer_commit", basis: { stated: stated.text } };
   const rule = (ctx.rules || []).find((r) => r.kind === "deadline" && (r.pattern === type || r.pattern === "*")
     && Number(r.effect?.due_hours) > 0);
-  const minutes = rule ? Number(rule.effect.due_hours) * 60 : (ctx.dueMinutes || DEFAULT_DUE_MINUTES)[priority];
+  const minutes = rule ? Number(rule.effect.due_hours) * 60
+    : (ctx.dueMinutesFor ? ctx.dueMinutesFor(type, priority) : null) ?? DEFAULT_DUE_MINUTES[priority];
   return {
-    at: addBusinessMinutes(ctx.now, minutes, ctx.timezone),
+    at: addBusinessMinutes(ctx.now, minutes, ctx.timezone, ctx.businessHours),
     source: "sla",
     basis: { priority, business_minutes: minutes, rule: rule ? rule.id || "deadline_rule" : null },
   };
@@ -200,11 +202,12 @@ export const classify = (m, ctx) => {
     priority = floor.effect.priority;
     reasons.push(inferred("customer_rule", "A customer rule sets this customer to at least " + priority + "."));
   }
-  const stated = statedDeadline(text, ctx.now, ctx.timezone);
+  const hours = ctx.businessHours || BUSINESS_HOURS;
+  const stated = statedDeadline(text, ctx.now, ctx.timezone, hours);
   if (stated) {
     reasons.push(fact("stated_deadline", 'Stated deadline: "' + stated.text + '".'));
     // Soon: by the close of the next business day.
-    const soon = closeOfBusiness(localYmd(addBusinessMinutes(ctx.now, BUSINESS_DAY_MINUTES, ctx.timezone), ctx.timezone), ctx.timezone);
+    const soon = closeOfBusiness(localYmd(addBusinessMinutes(ctx.now, dayMinutes(hours), ctx.timezone, hours), ctx.timezone), ctx.timezone, hours);
     if (priority === "normal" && stated.at <= soon) {
       priority = raise(priority);
       reasons.push(inferred("deadline_soon", "The stated deadline is by the end of the next business day."));

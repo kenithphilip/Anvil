@@ -1,10 +1,11 @@
 // Business-time arithmetic in a tenant timezone, for due times.
 //
-// The weekend is Saturday and Sunday, the same rule as datemath.isWeekend.
-// shortcut: no holidays and no per-tenant work week yet; EA-6 reads them from
-// the policy and holiday_calendar.
+// The hours come from the tenant policy (policy.js business_hours): a start, an
+// end and the weekend days. The default weekend is Saturday and Sunday, the
+// same rule as datemath.isWeekend.
+// shortcut: no holidays yet; read holiday_calendar here when a tenant needs it.
 
-export const BUSINESS_HOURS = { start: "09:30", end: "17:30" };
+export const BUSINESS_HOURS = { start: "09:30", end: "17:30", weekend: ["Sat", "Sun"] };
 export const BUSINESS_DAY_MINUTES = 480;
 
 const hm = (s) => {
@@ -36,7 +37,14 @@ export const zonedToUtc = (y, mo, d, h, mi, tz) => {
   return new Date(guess - (asIfUtc - guess));
 };
 
-const isWeekend = (p) => p.weekday === "Sat" || p.weekday === "Sun";
+const isWeekend = (p, hours) => (hours.weekend || BUSINESS_HOURS.weekend).includes(p.weekday);
+
+// The business minutes in one working day.
+export const dayMinutes = (hours = BUSINESS_HOURS) => {
+  const a = hm(hours.start);
+  const b = hm(hours.end);
+  return Math.max(1, (b.h * 60 + b.m) - (a.h * 60 + a.m));
+};
 
 // Add business minutes to an instant: time counts only inside the business
 // hours of a weekday.
@@ -49,7 +57,7 @@ export const addBusinessMinutes = (start, minutes, tz, hours = BUSINESS_HOURS) =
     const p = zonedParts(new Date(t), tz);
     const dayOpen = zonedToUtc(p.y, p.mo, p.d, open.h, open.m, tz).getTime();
     const dayClose = zonedToUtc(p.y, p.mo, p.d, close.h, close.m, tz).getTime();
-    if (isWeekend(p) || t >= dayClose) {
+    if (isWeekend(p, hours) || t >= dayClose) {
       t = zonedToUtc(p.y, p.mo, p.d + 1, open.h, open.m, tz).getTime();
       continue;
     }

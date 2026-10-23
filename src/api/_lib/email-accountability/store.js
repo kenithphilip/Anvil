@@ -15,6 +15,20 @@ export const STATUS_CATEGORY = {
   cancelled: "cancelled",
 };
 
+// The moves a person may make (plan 6.5). "performed" needs evidence (EA-5)
+// and "awaiting_verification" is set by the verifier, so neither is here.
+// From performed or cancelled, "pending" is a reopen.
+export const TRANSITIONS = {
+  detected: ["pending", "cancelled"],
+  awaiting_review: ["pending", "cancelled"],
+  pending: ["in_progress", "cancelled"],
+  in_progress: ["pending", "cancelled"],
+  awaiting_verification: ["in_progress", "cancelled"],
+  performed: ["pending"],
+  cancelled: ["pending"],
+};
+export const isReopen = (from, to) => to === "pending" && (from === "performed" || from === "cancelled");
+
 // Make the pair in one transaction, or return the existing one. Returns
 // { actionId, itemId, created }.
 export const ensureAction = async (svc, item, action) => {

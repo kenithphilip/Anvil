@@ -19,7 +19,7 @@
 // PostgREST does (plain columns, alias:column, and JSON paths with -> and
 // ->>), so a misspelled column reads back undefined. Embedded resources are
 // not supported and throw. Off by default, so existing tests see whole rows.
-// Also: neq, lt, ilike, not(col, "in", "(a,b)"), not(col, "is", null), range,
+// Also: neq, lt, ilike, overlaps, delete, not(col, "in", "(a,b)"), not(col, "is", null), range,
 // upsert(rows, { onConflict }), and or() terms with lt, lte, gt and gte.
 
 type Row = Record<string, any>;
@@ -88,6 +88,9 @@ export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record
       if (st.mode === "update") {
         out = ds.filter(matches);
         for (const r of out) Object.assign(r, st.patch);
+      } else if (st.mode === "delete") {
+        out = ds.filter(matches);
+        db.tables[table] = ds.filter((r) => !matches(r));
       } else if (st.mode === "insert") {
         const rows = Array.isArray(st.row) ? st.row : [st.row];
         out = rows.map((r: Row) => ({ id: r.id || "gen-" + (++seq), ...r }));
@@ -138,6 +141,7 @@ export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record
       },
       range: (from: number, to: number) => { st.range = [from, to]; return b; },
       in: (c: string, vs: unknown[]) => { st.filters.push((r: Row) => vs.includes(r[c])); return b; },
+      overlaps: (c: string, vs: unknown[]) => { st.filters.push((r: Row) => Array.isArray(r[c]) && r[c].some((x: unknown) => vs.includes(x))); return b; },
       is: (c: string, v: unknown) => { st.filters.push((r: Row) => (r[c] ?? null) === v); return b; },
       gte: (c: string, v: any) => { st.filters.push((r: Row) => r[c] >= v); return b; },
       lte: (c: string, v: any) => { st.filters.push((r: Row) => r[c] <= v); return b; },
@@ -174,6 +178,7 @@ export const createMemoryDb = (tables: Record<string, Row[]> = {}, users: Record
       order: (col: string, opts?: { ascending?: boolean }) => { st.order = { col, asc: !opts || opts.ascending !== false }; return b; },
       limit: (n: number) => { st.limit = n; return b; },
       update: (patch: Row) => { st.mode = "update"; st.patch = patch; return b; },
+      delete: () => { st.mode = "delete"; return b; },
       insert: (row: Row | Row[]) => { st.mode = "insert"; st.row = row; return b; },
       upsert: (row: Row | Row[], o?: { onConflict?: string }) => { st.mode = "upsert"; st.row = row; st.onConflict = o?.onConflict || null; return b; },
       maybeSingle: () => { st.single = "maybe"; return Promise.resolve(run()); },

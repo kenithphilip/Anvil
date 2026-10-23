@@ -177,6 +177,9 @@ import emailSync               from "./email/sync.js";
 import emailConnections        from "./email/connections.js";
 import emailConnectCallback    from "./email/connect_callback.js";
 import emailGoogleApp          from "./email/google_app.js";
+import emailActionsIndex       from "./email_actions/index.js";
+import emailActionsById        from "./email_actions/[id].js";
+import emailRules              from "./email_rules/index.js";
 
 import evalCases               from "./eval/cases.js";
 import evalDashboard           from "./eval/dashboard.js";
@@ -1038,6 +1041,8 @@ const STATIC_ROUTES = {
   "/email/connections":             emailConnections,
   "/email/connect/callback":        emailConnectCallback,
   "/email/google_app":              emailGoogleApp,
+  "/email_actions":                 emailActionsIndex,
+  "/email_rules":                   emailRules,
 
   "/eval/cases":                    evalCases,
   "/eval/dashboard":                evalDashboard,
@@ -1187,6 +1192,8 @@ const STATIC_ROUTES = {
 // asserts against /orders/abc/extra; that test still passes
 // because no SUFFIX entry exists for /orders.
 const DYNAMIC_ROUTES = [
+  // "/email_actions/<id>" -> one email action (GET, PATCH).
+  { prefix: "/email_actions/", handler: emailActionsById, param: "id" },
   // "/documents/<id>/evidence" -> per-document OCR bbox readback.
   { prefix: "/documents/",   suffix: "/evidence", handler: documentsEvidence, param: "id" },
   // "/documents/<id>" -> documentsById, sets req.query.id

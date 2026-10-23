@@ -288,6 +288,13 @@ export const SERVER_ACTIONS = {
   // so.push_tally: push to Tally. The same set as the approve verb, which
   // tally/push.js checks.
   "so.push_tally": new Set(["sales_manager", "finance", "admin"]),
+  // Email accountability (docs/EMAIL_ACCOUNTABILITY_SCOPE.md 6.8). Without
+  // email.view_all a user sees only the actions they own, back up, or whose
+  // mailbox they own.
+  "email.view_all": new Set(["sales_manager", "admin"]),
+  "email.reassign": new Set(["sales_manager", "admin"]),
+  "email.verify":   new Set(["sales_manager", "admin"]),
+  "email.rules":    new Set(["admin"]),
 };
 
 export const hasAction = (ctx, action) => {

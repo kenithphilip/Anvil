@@ -186,6 +186,7 @@ const WiredHomeEngineer = () => {
           </Card>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {RBAC?.canRead?.("email-actions") && <MyEmailActions />}
             <Card title="Live activity" eyebrow="last events"
                   right={<Btn sm kind="ghost" onClick={() => window.location.hash = "#/audit"}>{Icon.history} log</Btn>}>
               {audit.loading ? (
@@ -214,6 +215,35 @@ const WiredHomeEngineer = () => {
         </div>
       </div>
     </>
+  );
+};
+
+// My open email actions, beside My Queue (docs/EMAIL_ACCOUNTABILITY_SCOPE.md
+// 6.10). Writers only, the same gate as the Email Actions screen.
+const MyEmailActions: React.FC = () => {
+  const resp = useFetch(() => AnvilBackend?.emailActions?.list?.({ scope: "mine" }) || Promise.resolve({ actions: [] }), []);
+  const rows: any[] = (resp.data as any)?.actions || [];
+  const overdue = rows.filter((a) => a.overdue).length;
+  return (
+    <Card title="My email actions" eyebrow={rows.length + " open" + (overdue ? " · " + overdue + " overdue" : "")}
+          right={<Btn sm kind="ghost" onClick={() => window.location.hash = "#/email-actions?sub=mine"}>all {Icon.arrowR}</Btn>}>
+      {resp.loading ? <div className="body">Loading…</div>
+        : rows.length === 0 ? <div className="mono-sm" style={{ color: "var(--ink-4)" }}>No email action waits for you.</div>
+        : (
+          <ul style={{ margin: 0, paddingLeft: 16 }}>
+            {rows.slice(0, 5).map((a) => (
+              <li key={a.id}>
+                <button type="button" className="link-btn" onClick={() => window.location.hash = "#/email-actions?sub=mine&id=" + a.id}>
+                  {a.title}
+                </button>{" "}
+                <Chip k={a.overdue ? "bad" : a.priority_label === "critical" ? "bad" : a.priority_label === "high" ? "warn" : "info"}>
+                  {a.overdue ? "overdue" : a.priority_label}
+                </Chip>
+              </li>
+            ))}
+          </ul>
+        )}
+    </Card>
   );
 };
 

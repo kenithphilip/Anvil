@@ -67,6 +67,7 @@ export default async function handler(req, res) {
       return json(res, 200, {
         ok: true,
         enabled: !!s?.email_accountability_enabled,
+        actions_mode: s?.email_actions_mode === "create" ? "create" : "observe",
         providers,
         redirect_uri: mailboxRedirectUri(),
         mailboxes: rows.data || [],

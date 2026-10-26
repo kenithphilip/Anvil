@@ -115,6 +115,7 @@ export const NAV: NavGroup[] = [
     items: [
       { id: "comms",     label: "Communications",icon: Icon.send },
       { id: "email",     label: "Email Triage",  icon: Icon.inbox },
+      { id: "email-actions", label: "Email Actions", icon: Icon.flag },
       { id: "voice",     label: "Voice",         icon: Icon.send },
       { id: "security",  label: "Security",      icon: Icon.shield },
     ],

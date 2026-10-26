@@ -22,7 +22,7 @@ import { mailboxRedirectUri } from "./connections.js";
 
 const redirect = (res, status) => {
   res.statusCode = 302;
-  res.setHeader("Location", publicBase() + "/#/admin?tab=communications&mailbox=" + encodeURIComponent(status));
+  res.setHeader("Location", publicBase() + "/#/email-actions?sub=mailboxes&mailbox=" + encodeURIComponent(status));
   res.end();
 };
 

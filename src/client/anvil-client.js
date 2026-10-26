@@ -1274,6 +1274,28 @@
     promise: async (payload) => apiFetch("/api/delivery/promise", { method: "POST", body: payload }),
   };
 
+  // Email accountability (docs/EMAIL_ACCOUNTABILITY_SCOPE.md).
+  const emailActions = {
+    list: async (params) => {
+      const qs = new URLSearchParams(params || {}).toString();
+      return apiFetch("/api/email_actions" + (qs ? "?" + qs : ""));
+    },
+    get: async (id) => apiFetch("/api/email_actions/" + encodeURIComponent(id)),
+    update: async (id, payload) => apiFetch("/api/email_actions/" + encodeURIComponent(id), { method: "PATCH", body: payload }),
+    recordEvidence: async (id, payload) => apiFetch("/api/email_actions/" + encodeURIComponent(id) + "/evidence", { method: "POST", body: payload }),
+    decideEvidence: async (id, payload) => apiFetch("/api/email_actions/" + encodeURIComponent(id) + "/verify", { method: "POST", body: payload }),
+    mailboxes: async () => apiFetch("/api/email/connections"),
+    connectMailbox: async (provider) => apiFetch("/api/email/connections", { method: "POST", body: { provider } }),
+    updateMailbox: async (payload) => apiFetch("/api/email/connections", { method: "PATCH", body: payload }),
+    disconnectMailbox: async (id) => apiFetch("/api/email/connections?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    rules: async () => apiFetch("/api/email_rules"),
+    addRule: async (payload) => apiFetch("/api/email_rules", { method: "POST", body: payload }),
+    updateRule: async (payload) => apiFetch("/api/email_rules", { method: "PATCH", body: payload }),
+    deleteRule: async (id) => apiFetch("/api/email_rules?id=" + encodeURIComponent(id), { method: "DELETE" }),
+    policy: async () => apiFetch("/api/email/policy"),
+    savePolicy: async (policy) => apiFetch("/api/email/policy", { method: "PUT", body: { policy } }),
+  };
+
   const inventory = {
     availability: async (lineItems) => apiFetch("/api/inventory/availability", { method: "POST", body: { lineItems } }),
     sync: async (records, replace) => apiFetch("/api/inventory/sync", { method: "POST", body: { records, replace: !!replace } }),
@@ -2104,6 +2126,7 @@
     fx,
     delivery,
     inventory,
+    emailActions,
     masterData,
     brsr,
     aa,

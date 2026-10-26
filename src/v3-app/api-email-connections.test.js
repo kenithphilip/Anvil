@@ -83,6 +83,8 @@ describe("GET /api/email/connections", () => {
     const r = await callHandler(connections, { method: "GET" });
     expect(r.body.mailboxes.map((m) => m.id)).toEqual(["m1"]);
     expect(r.body.providers).toEqual({ outlook: true, gmail: false });
+    // migration 268 not in the seed: a missing mode reads as observe.
+    expect(r.body.actions_mode).toBe("observe");
     const keys = Object.keys(r.body.mailboxes[0]);
     expect(keys).not.toContain("access_token_enc");
     expect(keys).not.toContain("refresh_token_enc");
@@ -154,7 +156,7 @@ describe("GET /api/email/connect/callback", () => {
     seed();
     H.respond = graphOk();
     const r = await runCallback({ code: "c1", state: state() });
-    expect(r.location).toBe("https://app.example/#/admin?tab=communications&mailbox=connected");
+    expect(r.location).toBe("https://app.example/#/email-actions?sub=mailboxes&mailbox=connected");
     const row = H.db.tables.mailbox_connections[0];
     expect(row).toMatchObject({ provider: "outlook", owner_user_id: "u1", address: "rep@seller.example", status: "active" });
     expect(row.refresh_token_enc).not.toContain("RT-new");

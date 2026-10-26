@@ -114,6 +114,13 @@ describe("list filters and row shape", () => {
     expect(ids(await callHandler(list, { query: { state: "escalated" } }))).toEqual([]);
   });
 
+  it("closed actions come latest first", async () => {
+    H.db.tables.work_items.push({ ...pair(7, { status: "performed", status_category: "done", completed_at: "2026-10-21T00:00:00Z" }).wi });
+    H.db.tables.email_actions.push(pair(7, {}, {}).ea);
+    as("mgr", "sales_manager");
+    expect((await callHandler(list, { query: { state: "closed" } })).body.actions.map((a) => a.id)).toEqual(["ea-7", "ea-5"]);
+  });
+
   it("a row carries names, links and the derived flags; critical comes first", async () => {
     as("u1");
     const r = await callHandler(list, { query: {} });

@@ -74,6 +74,9 @@ export const MATRIX: Record<string, MatrixRow> = {
   agents:      { sales_engineer: "rw",  sales_manager: "rw", procurement: "rw", finance: "rw",  admin: "rw", operator: "r",  viewer: "r" },
   comms:       { sales_engineer: "rw",  sales_manager: "rw", procurement: "r",  finance: "r",   admin: "rw", operator: "",   viewer: "r" },
   email:       { sales_engineer: "r",   sales_manager: "rw", procurement: "r",  finance: "r",   admin: "rw", operator: "",   viewer: "r" },
+  // Email accountability: writers only; the rows carry mail subjects. The
+  // server (write + per-action visibility) is the real gate.
+  "email-actions": { sales_engineer: "rw", sales_manager: "rwa", procurement: "rw", finance: "rw", admin: "rwa", operator: "rw", viewer: "" },
   security:    { sales_engineer: "",    sales_manager: "",   procurement: "",   finance: "",    admin: "x",  operator: "",   viewer: "" },
   audit:       { sales_engineer: "r",   sales_manager: "r",  procurement: "r",  finance: "r",   admin: "rw", operator: "",   viewer: "r" },
   admin:       { sales_engineer: "",    sales_manager: "",   procurement: "",   finance: "",    admin: "x",  operator: "",   viewer: "" },

@@ -160,7 +160,10 @@ export const listActions = async (svc, ctx, f = {}) => {
     if (f.state && !["open", "closed", "overdue", "escalated"].includes(f.state) && wi.status !== f.state) return false;
     return true;
   });
-  out.sort((a, b) => (a.wi.priority - b.wi.priority) || String(a.wi.due_at || "~").localeCompare(String(b.wi.due_at || "~")));
+  // Open: most urgent first, then the earliest due. Closed: the latest first.
+  out.sort(closed
+    ? (a, b) => String(b.wi.completed_at || b.wi.updated_at || "").localeCompare(String(a.wi.completed_at || a.wi.updated_at || ""))
+    : (a, b) => (a.wi.priority - b.wi.priority) || String(a.wi.due_at || "~").localeCompare(String(b.wi.due_at || "~")));
   const look = await lookups(svc, ctx, out);
   return out.map(({ ea, wi }) => shape(ea, wi, look, now));
 };

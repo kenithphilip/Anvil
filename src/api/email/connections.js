@@ -36,7 +36,7 @@ const LIMITS = {
 
 const bad = (res, message) => json(res, 400, { error: { message } });
 
-const loadOwnRow = async (svc, ctx, id) => {
+export const loadOwnRow = async (svc, ctx, id) => {
   const r = await svc.from("mailbox_connections")
     .select(SAFE_COLUMNS)
     .eq("tenant_id", ctx.tenantId)

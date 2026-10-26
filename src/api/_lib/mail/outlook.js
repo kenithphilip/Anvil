@@ -164,4 +164,11 @@ export const listPage = async (token, checkpoint, { folder, sinceIso, pageSize }
   return { messages, checkpoint: next || delta || url, done: !next };
 };
 
+// The newest sent messages, for the onboarding check (one request).
+export const sampleSent = async (token, run, n = 10) => {
+  const q = new URLSearchParams({ $top: String(n), $orderby: "sentDateTime desc", $select: SELECT, $expand: EXPAND });
+  const body = await graphGet(run, token, GRAPH + "/me/mailFolders/sentitems/messages?" + q.toString(), 'IdType="ImmutableId"');
+  return (body.value || []).map((m) => normalise(m, "sent"));
+};
+
 export const webLink = (m) => m.webLink || null;

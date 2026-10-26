@@ -46,6 +46,11 @@ ALWAYS:
   Acumatica, Prophet 21, Eclipse, SX.e
 - Push notification queue drain
 - Inbound email parse
+- email/sync: poll the connected mailboxes that are due (email
+  accountability, `docs/EMAIL_ACCOUNTABILITY_SETUP.md`). Only tenants
+  with `email_accountability_enabled`. Bounded per run.
+- email/sweep: email action reminders and escalation. Only tenants in
+  `create` mode. Idempotent through `email_action_notices`.
 
 WHEN minute % 30 === 0 (on the hour and half-hour):
 
@@ -81,6 +86,11 @@ handler neither blocks nor starves the rest):
 - eval/quality_alert (DPMO breach → admin bell)
 - docai/extraction_reaper (runs stranded at `status='running'`)
 - logistics/monitor_daily — **backstop**, see below
+- email/sweep_daily: the backstop for email/sweep, under its own name for
+  the same reason as logistics/monitor_daily (30-hour bound in
+  `heartbeat-check.js`)
+- email/purge: clears email action previews past
+  `email_content_retention_days` (30-hour bound)
 - eval/replay — only when `EVAL_REPLAY_ENABLED` is set
 
 #### Why the logistics monitor is registered twice

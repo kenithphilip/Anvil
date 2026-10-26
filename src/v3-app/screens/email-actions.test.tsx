@@ -45,6 +45,13 @@ const stub = (over: Record<string, any> = {}) => {
     updateMailbox: vi.fn(async () => ({ ok: true })),
     disconnectMailbox: vi.fn(async () => ({ ok: true })),
     rules: vi.fn(async () => ({ rules: [], can_edit_tenant_rules: false })),
+    checkMailbox: vi.fn(async () => ({ report: { provider: "outlook", verdict: "index_only", text: "Replies verify by the index.", replies: 2, sampled: 10, with_headers: 0, with_index: 2 } })),
+    health: vi.fn(async () => ({
+      settings: { retention_days: 30, actions_mode: "observe" },
+      totals: { mailboxes: 2, active: 1, paused: 1, reauth_required: 0, requests_today: 40, budget_today: 3000 },
+      waiting_for_a_person: 4, failed_notices: 0, actions_by_status: { pending: 3 },
+      last_sync_counts: { would_create: 5, would_verify: 2 }, crons: [{ worker: "email/sync", last_run_at: iso(NOW) }], policy: { timezone: "Asia/Kolkata" },
+    })),
     addRule: vi.fn(async () => ({ ok: true })),
     updateRule: vi.fn(async () => ({ ok: true })),
     deleteRule: vi.fn(async () => ({ ok: true })),
@@ -162,6 +169,24 @@ describe("mailboxes", () => {
     await waitFor(() => expect(api.updateMailbox).toHaveBeenCalledWith({ id: "m1", resume: true }));
     fireEvent.click(getByRole("button", { name: "disconnect" }));
     await waitFor(() => expect(api.disconnectMailbox).toHaveBeenCalledWith("m1"));
+  });
+});
+
+describe("mailbox check and health", () => {
+  it("check replies shows the verdict; the health card is for an admin only", async () => {
+    const mailbox = { id: "m2", provider: "outlook", address: "ok@seller.example", status: "active", requests_today: 0, daily_request_budget: 1500 };
+    const over = { mailboxes: vi.fn(async () => ({ enabled: true, actions_mode: "create", providers: { outlook: true }, mailboxes: [mailbox] })) };
+    const se = await mount("#/email-actions?sub=mailboxes", "sales_engineer", over);
+    fireEvent.click(await se.findByRole("button", { name: "check replies" }));
+    await waitFor(() => expect(se.api.checkMailbox).toHaveBeenCalledWith("m2"));
+    expect(await se.findByText("Reply check: index only")).toBeTruthy();
+    expect(se.queryByText("Health and cost")).toBeNull();
+    expect(se.api.health).not.toHaveBeenCalled();
+    se.unmount();
+
+    const adm = await mount("#/email-actions?sub=mailboxes", "admin", over);
+    expect(await adm.findByText("Health and cost")).toBeTruthy();
+    expect(adm.getByText("Waiting for a person")).toBeTruthy();
   });
 });
 

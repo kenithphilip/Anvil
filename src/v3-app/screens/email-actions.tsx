@@ -192,9 +192,44 @@ const Manager: React.FC<{ open: Action[]; closed: Action[] }> = ({ open, closed 
   );
 };
 
+// Admin only (email.rules): the module's health and cost for the tenant.
+const Health: React.FC = () => {
+  const resp = useFetch(() => AnvilBackend?.emailActions?.health?.(), []);
+  const h: any = resp.data;
+  if (resp.loading) return <Card><div className="body">Loading health…</div></Card>;
+  if (resp.error || !h) return <Banner kind="warn" title="Could not load the health view">{String((resp.error as any)?.message || "no data")}</Banner>;
+  const t = h.totals || {};
+  return (
+    <Card title="Health and cost" eyebrow={"retention " + h.settings?.retention_days + " days · " + h.settings?.actions_mode + " mode"}>
+      <KPIRow>
+        <KPI lbl="Mailboxes active" v={String(t.active || 0)} d={(t.mailboxes || 0) + " connected"} />
+        <KPI lbl="Paused" v={String(t.paused || 0)} d="budget, quota, throttle or failures" dKind={t.paused ? "down" : ""} />
+        <KPI lbl="Need a sign-in" v={String(t.reauth_required || 0)} d="token refused" dKind={t.reauth_required ? "down" : ""} />
+        <KPI lbl="Requests today" v={String(t.requests_today || 0)} d={"of " + (t.budget_today || 0) + " budget"} />
+        <KPI lbl="Waiting for a person" v={String(h.waiting_for_a_person || 0)} d="ambiguous or claimed evidence" />
+        <KPI lbl="Failed notices" v={String(h.failed_notices || 0)} d="retried up to 3 times" />
+      </KPIRow>
+      <KV rows={[
+        ["Quota errors", String(t.quota_errors || 0)],
+        ["Checkpoint resets", String(t.checkpoint_resets || 0)],
+        ["Last sync would make", (h.last_sync_counts?.would_create || 0) + " actions, verify " + (h.last_sync_counts?.would_verify || 0)],
+        ["Actions by state", Object.entries(h.actions_by_status || {}).map(([k, v]) => (STATE_LABEL[k] || k) + " " + v).join(" · ") || "none"],
+        ["Schedulers", (h.crons || []).map((c: any) => c.worker + ": " + (c.last_run_at ? ageLabel(c.last_run_at) + " ago" : "never")).join(" · ") || "no heartbeat yet"],
+      ]} />
+      <details style={{ marginTop: 8 }}>
+        <summary className="mono-sm">Effective policy</summary>
+        <pre className="mono-sm" style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(h.policy, null, 2)}</pre>
+      </details>
+    </Card>
+  );
+};
+
 const Mailboxes: React.FC<{ resp: any; reload: () => void }> = ({ resp, reload }) => {
   const d = resp.data || {};
   const status = readHashParam("mailbox");
+  const [check, setCheck] = useState<any>(null);
+  const runCheck = (id: string) => Promise.resolve(AnvilBackend?.emailActions?.checkMailbox?.(id))
+    .then((r: any) => { setCheck(r?.report || null); reload(); }).catch(failNotice("Check"));
   const connect = (provider: string) => Promise.resolve(AnvilBackend?.emailActions?.connectMailbox?.(provider))
     .then((r: any) => { if (r?.authorize_url) window.location.href = r.authorize_url; })
     .catch(failNotice("Connect"));
@@ -215,6 +250,11 @@ const Mailboxes: React.FC<{ resp: any; reload: () => void }> = ({ resp, reload }
       </span>}>
         <div className="body">Anvil asks for read-only access. It never sends, moves or deletes mail.</div>
       </Card>
+      {check && (
+        <Banner kind={check.verdict === "headers_ok" || check.verdict === "index_only" ? "good" : "warn"} title={"Reply check: " + check.verdict.replace(/_/g, " ")}>
+          {check.text} ({check.replies} replies in {check.sampled} sent messages; {check.with_headers} with headers{check.provider === "outlook" ? ", " + check.with_index + " with an index step" : ""}.)
+        </Banner>
+      )}
       <Card flush title="Mailboxes">
         {(d.mailboxes || []).length === 0 ? <div className="body" style={{ padding: 18 }}>No mailbox is connected.</div> : (
           <table className="tbl">
@@ -231,6 +271,7 @@ const Mailboxes: React.FC<{ resp: any; reload: () => void }> = ({ resp, reload }
                   <td className="row gap-sm">
                     {(m.status === "paused" || m.pause_reason) && m.status !== "reauth_required" && <Btn sm kind="ghost" onClick={() => resume(m.id)}>resume</Btn>}
                     {m.status === "reauth_required" && <Btn sm kind="ghost" onClick={() => connect(m.provider)}>sign in again</Btn>}
+                    {m.status === "active" && !m.pause_reason && <Btn sm kind="ghost" onClick={() => runCheck(m.id)}>check replies</Btn>}
                     {m.status !== "disconnected" && <Btn sm kind="ghost" onClick={() => disconnect(m.id)}>disconnect</Btn>}
                   </td>
                 </tr>
@@ -468,6 +509,7 @@ const EmailActionsScreen: React.FC = () => {
         {!open.loading && sub === "review" && <Card flush title="Awaiting review"><ActionTable rows={rows} sub="review" empty="Nothing waits for a review." /></Card>}
         {!open.loading && sub === "manager" && manager && <Manager open={rows} closed={listOf(closed)} />}
         {sub === "mailboxes" && <Mailboxes resp={mailboxes} reload={() => setBump((n) => n + 1)} />}
+        {sub === "mailboxes" && RBAC.canDo("email.rules") && <Health />}
         {sub === "rules" && <Rules />}
       </div>
     </>

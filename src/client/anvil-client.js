@@ -1294,6 +1294,8 @@
     deleteRule: async (id) => apiFetch("/api/email_rules?id=" + encodeURIComponent(id), { method: "DELETE" }),
     policy: async () => apiFetch("/api/email/policy"),
     savePolicy: async (policy) => apiFetch("/api/email/policy", { method: "PUT", body: { policy } }),
+    health: async () => apiFetch("/api/email/health"),
+    checkMailbox: async (id) => apiFetch("/api/email/check", { method: "POST", body: { id } }),
   };
 
   const inventory = {

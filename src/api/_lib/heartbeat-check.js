@@ -49,6 +49,7 @@ export const CRON_EXPECTED_MAX_AGE_MS = {
   // The email sweep's daily backstop row (cron/daily.js). "email/sweep" in
   // the tick keeps the 10-minute default.
   "email/sweep_daily":       30 * 60 * 60 * 1000,
+  "email/purge":             30 * 60 * 60 * 1000,
   default:                10 * 60 * 1000,
 };
 

@@ -205,4 +205,10 @@ export const listPage = async (token, checkpoint, { sinceIso, pageSize: size, ad
   };
 };
 
+// The newest sent messages, for the onboarding check (1 + n requests).
+export const sampleSent = async (token, run, n = 10) => {
+  const list = await get(run, token, API + "/messages?" + new URLSearchParams({ labelIds: "SENT", maxResults: String(n) }).toString(), base403);
+  return fetchMessages(run, token, (list.messages || []).map((m) => m.id), null);
+};
+
 export const webLink = (m) => m.webLink || null;

@@ -96,8 +96,9 @@ const dispatch = async (svc, action) => {
   }
 };
 
-const drainOnce = async (svc) => {
+const drainOnce = async (svc, tenantId) => {
   return drainQueue(svc, {
+    tenantId,   // null for cron (all tenants); set for a manual admin drain
     table: "voice_call_actions",
     selectColumns: "id, tenant_id, call_id, action, payload, completed, result, error, created_at",
     completedColumn: "completed",
@@ -147,7 +148,7 @@ export default async function handler(req, res) {
     }
     const ctx = await resolveContext(req);
     requirePermission(ctx, "approve");
-    const out = await drainOnce(svc);
+    const out = await drainOnce(svc, ctx.tenantId);   // manual drain -> caller's tenant only
     await recordAudit(ctx, {
       action: "voice_actions_drain",
       objectType: "tenant",

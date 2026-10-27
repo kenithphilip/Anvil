@@ -123,11 +123,13 @@ const dispatchByIntent = async (svc, email) => {
   }
 };
 
-const drainOnce = async (svc) => {
-  const rows = await svc.from("inbound_emails")
+const drainOnce = async (svc, tenantId) => {
+  let q = svc.from("inbound_emails")
     .select("id, tenant_id, from_address, subject, classified_intent, customer_id, customer_contact_id, received_at")
     .in("classified_intent", ACTIONABLE_INTENTS)
-    .is("agent_reply_handled_at", null)
+    .is("agent_reply_handled_at", null);
+  if (tenantId) q = q.eq("tenant_id", tenantId);   // null for cron (all tenants); set for a manual admin drain
+  const rows = await q
     .order("received_at", { ascending: true })
     .limit(BATCH_SIZE);
   if (rows.error) throw new Error("inbound_emails read: " + rows.error.message);
@@ -178,7 +180,7 @@ export default async function handler(req, res) {
     }
     const ctx = await resolveContext(req);
     requirePermission(ctx, "approve");
-    const out = await drainOnce(svc);
+    const out = await drainOnce(svc, ctx.tenantId);   // manual drain -> caller's tenant only
     await recordAudit(ctx, {
       action: "inbound_reply_drain",
       objectType: "tenant",
